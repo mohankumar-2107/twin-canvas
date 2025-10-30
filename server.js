@@ -1,39 +1,47 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+// Change this line
+const socketIo = require('socket.io'); 
 const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+
+// --- MAKE THIS CHANGE ---
+// Replace your old io setup with this one
+const io = new socketIo.Server(server, {
+  cors: {
+    origin: "*", // This allows any origin
+    methods: ["GET", "POST"]
+  }
+});
+// --- END OF CHANGE ---
 
 const PORT = process.env.PORT || 3000;
 
-// Corrected line: Serve all static files from the root project directory
+// (The rest of your server.js code stays exactly the same)
 app.use(express.static(__dirname));
 
 const rooms = {};
 
 io.on('connection', (socket) => {
+    // ... all your socket logic is here ...
     console.log(`User connected: ${socket.id}`);
 
     socket.on('join_room', (data) => {
         const { room, userName } = data;
         socket.join(room);
         
-        // Store user info
         if (!rooms[room]) {
             rooms[room] = [];
         }
         rooms[room].push({ id: socket.id, name: userName });
 
         console.log(`${userName} (${socket.id}) joined room: ${room}`);
-        // Notify others in the room
         socket.to(room).emit('user_joined', { userName });
     });
 
     socket.on('draw', (data) => {
-        // Broadcast drawing data to everyone else in the same room
         socket.to(data.room).emit('draw', data);
     });
 
@@ -47,7 +55,6 @@ io.on('connection', (socket) => {
     
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
-        // Find which room the user was in and notify others
         for (const room in rooms) {
             const userIndex = rooms[room].findIndex(user => user.id === socket.id);
             if (userIndex !== -1) {
@@ -61,6 +68,7 @@ io.on('connection', (socket) => {
         }
     });
 });
+
 
 server.listen(PORT, () => {
     console.log(`TwinCanvas server running on http://localhost:${PORT}`);
