@@ -463,3 +463,31 @@ input[type="color"] {
     background-color: rgba(255, 255, 255, 0.4);
     transform: translateY(-2px);
 }
+/* Add these styles to the end of your style.css file */
+
+.user-initials-container {
+    position: fixed;
+    top: 25px;
+    left: 25px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 8px;
+    border-radius: 50px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: flex;
+    gap: 8px;
+    z-index: 101; /* Make sure it's above the canvas */
+}
+
+.initial-circle {
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.1em;
+    font-weight: bold;
+    cursor: default;
+}
