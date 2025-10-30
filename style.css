@@ -491,3 +491,19 @@ input[type="color"] {
     font-weight: bold;
     cursor: default;
 }
+/* Find the old .initial-circle and replace it with this */
+
+.initial-circle {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.2em;
+    font-weight: 500; /* Lighter than bold */
+    cursor: default;
+    /* The background-color will now be set by JavaScript */
+}
+
