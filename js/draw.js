@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const socket = io('https://your-render-url-goes-here.onrender.com');
+    const socket = io('https://twin-canvas.onrender.com');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
