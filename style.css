@@ -1,0 +1,465 @@
+/* --- Global Styles & Animations --- */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Poppins:wght@400;600&display=swap');
+
+:root {
+    --primary-color: #6a82fb;
+    --secondary-color: #fc5c7d;
+    --bg-gradient-start: #a2b2ee;
+    --bg-gradient-end: #6a82fb;
+    --text-color: #333;
+    --light-text-color: #f0f0f0; /* For text on dark backgrounds */
+    --card-bg: rgba(255, 255, 255, 0.9);
+    --dark-card-bg: rgba(60, 60, 90, 0.8); /* For modal in image */
+    --input-bg: rgba(255, 255, 255, 0.95);
+    --border-color: #ddd;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    --btn-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    --btn-hover-shadow: 0 7px 20px rgba(0, 0, 0, 0.25);
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    margin: 0;
+    color: var(--text-color);
+    background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
+    background-size: 200% 200%;
+    animation: gradientShift 10s ease infinite alternate;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    max-width: 1200px;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.card {
+    background: var(--card-bg);
+    padding: 40px;
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    text-align: center;
+    max-width: 400px;
+    width: 100%;
+    margin: 15px;
+}
+
+h1, h2, h3 {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 700;
+    margin-top: 0;
+}
+
+.btn {
+    display: inline-block;
+    background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 15px 30px;
+    border: none;
+    border-radius: 50px;
+    font-size: 1.1em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: var(--btn-shadow);
+    margin-top: 20px;
+}
+
+.btn:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--btn-hover-shadow);
+}
+
+input[type="text"] {
+    width: calc(100% - 30px);
+    padding: 15px;
+    margin-top: 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    font-size: 1em;
+    box-sizing: border-box;
+    background-color: var(--input-bg);
+    transition: border-color 0.2s;
+}
+input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(106, 130, 251, 0.2);
+}
+
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 1s ease-out forwards; }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.slide-up { animation: slideUp 0.8s ease-out forwards; }
+
+/* --- Specific Page Styles --- */
+/* Welcome & Name Input Page (index.html) */
+.welcome-container {
+    text-align: center;
+    color: var(--light-text-color);
+}
+.welcome-container .title {
+    font-size: 5em;
+    margin-bottom: 5px;
+    text-shadow: 2px 2px 8px rgba(0,0,0,0.2);
+}
+.welcome-container .subtitle {
+    font-size: 1.5em;
+    opacity: 0.9;
+    margin-bottom: 40px;
+}
+.name-input-card {
+    background: var(--card-bg); /* Use light card background */
+    padding: 30px 40px;
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    max-width: 450px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.name-input-card input[type="text"] {
+    width: 100%;
+    margin-top: 0;
+}
+.name-input-card .btn {
+    width: auto;
+}
+
+/* Room Page (room.html) */
+.room-container {
+    flex-direction: row;
+    gap: 30px;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: center;
+}
+.room-card { /* Specific styling for room cards */
+    flex: 1;
+    min-width: 300px;
+    max-width: 450px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 35px 30px;
+}
+.room-card h2 {
+    font-size: 1.8em;
+    color: var(--primary-color);
+}
+.room-card p {
+    font-size: 1em;
+    color: #666;
+    margin-bottom: 25px;
+}
+.room-card input[type="text"] {
+    width: calc(100% - 20px);
+    max-width: 200px;
+    margin-top: 0;
+    text-align: center;
+    letter-spacing: 2px;
+}
+.room-card .btn {
+    width: auto;
+    margin-top: auto;
+}
+
+/* Modal for Room Code */
+.modal-container {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+.hidden { display: none; }
+.modal-content {
+    background: var(--dark-card-bg); /* Dark background as per image */
+    color: var(--light-text-color);
+    padding: 40px;
+    border-radius: 20px;
+    text-align: center;
+    box-shadow: var(--shadow);
+    animation: fadeIn 0.3s ease-out forwards;
+}
+.modal-content h3 {
+    color: var(--light-text-color);
+    font-size: 1.8em;
+    margin-bottom: 15px;
+}
+.modal-content p {
+    font-size: 1.1em;
+    color: #ccc;
+    margin-bottom: 10px;
+}
+.room-code-display {
+    background: rgba(255, 255, 255, 0.2); /* Semi-transparent background for code */
+    padding: 12px 25px;
+    border-radius: 12px;
+    font-size: 2.2em;
+    font-weight: bold;
+    letter-spacing: 4px;
+    margin: 20px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    max-width: fit-content;
+}
+#roomCodeText {
+    color: var(--light-text-color); /* Ensure text is visible */
+}
+#copyCodeBtn {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+}
+#copyCodeBtn:hover {
+    background-color: #546cfd;
+}
+.waiting-text {
+    color: #ccc;
+    font-style: italic;
+    margin-top: 25px;
+}
+
+/* Drawing Page (draw.html) */
+#canvas {
+    display: block;
+    background: #fdfdfd;
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 1; /* Below toolbars */
+}
+
+/* Toolbars */
+.toolbar {
+    position: fixed;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 50px;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    z-index: 100;
+    padding: 10px 15px;
+}
+
+.main-toolbar {
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.utility-toolbar {
+    top: 20px;
+    right: 20px; /* Position to the top right as seen in image */
+    padding: 10px; /* Adjust padding for smaller buttons */
+    border-radius: 15px; /* More rectangular for utility */
+    gap: 10px; /* Smaller gap */
+}
+
+.toolbar button, .toolbar label {
+    background: none;
+    border: none;
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    font-size: 18px;
+    cursor: pointer;
+    color: #555;
+    transition: background-color 0.2s, color 0.2s;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.toolbar button:hover, .toolbar label:hover { background-color: #f0f0f0; }
+.toolbar button.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+/* Specific button styles for utility toolbar */
+.utility-toolbar button {
+    width: 38px;
+    height: 38px;
+    font-size: 16px;
+    border-radius: 10px; /* More square-ish for utility */
+}
+
+input[type="color"] {
+    opacity: 0;
+    width: 100%; height: 100%;
+    position: absolute;
+    cursor: pointer;
+}
+.color-picker-container { position: relative; }
+.stroke-width-container { display: flex; align-items: center; gap: 5px; }
+#strokeWidth {
+    width: 80px;
+    cursor: pointer;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .welcome-container .title { font-size: 3.5em; }
+    .welcome-container .subtitle { font-size: 1.2em; }
+    .name-input-card { padding: 25px; }
+
+    .room-container { flex-direction: column; gap: 20px; }
+    .room-card { max-width: 90%; }
+    
+    .main-toolbar {
+        top: auto;
+        bottom: 20px;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 90%;
+        width: auto;
+    }
+    .main-toolbar button, .main-toolbar label { width: 40px; height: 40px; font-size: 16px; }
+    .stroke-width-container {
+        flex-basis: 100%;
+        justify-content: center;
+        margin-top: 10px;
+    }
+    
+    .utility-toolbar {
+        top: 20px;
+        left: 20px; /* Move to top left on mobile to avoid main toolbar */
+        right: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .welcome-container .title { font-size: 2.5em; }
+    .welcome-container .subtitle { font-size: 1em; }
+    .name-input-card { padding: 20px; }
+    .modal-content { padding: 25px; }
+    .room-code-display { font-size: 1.8em; }
+}
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.room-container {
+    flex-direction: column; /* Stack items vertically */
+}
+
+.welcome-header {
+    text-align: center;
+    color: white;
+    margin-bottom: 30px; /* Space between message and cards */
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+}
+
+.welcome-header h2 {
+    font-size: 1.8em;
+    font-weight: 500;
+}
+
+.room-options {
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+}
+.logout-btn {
+    position: fixed; /* Position relative to the browser window */
+    top: 20px;
+    right: 25px;
+    background-color: rgba(255, 255, 255, 0.25);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 50px;
+    text-decoration: none;
+    font-weight: 500;
+    transition: background-color 0.3s, transform 0.2s;
+    z-index: 100; /* Ensure it stays on top of other elements */
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.logout-btn:hover {
+    background-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-2px); /* Add a slight lift on hover */
+}
+.branding-tagline {
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 15px;
+}
+
+/* Ensure modal is clickable outside the content */
+.modal-container {
+    background: rgba(0, 0, 0, 0.6); /* Slightly darker overlay */
+}
+/* Add this to the end of your style.css file */
+.branding-tagline {
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.75);
+    margin-top: 25px;
+    font-style: italic;
+}
+.branding-tagline {
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.75);
+    margin-top: 25px;
+    font-style: italic;
+}
+/* Add this to the end of your style.css file for the back button */
+
+.back-btn {
+    position: fixed;
+    top: 20px;
+    left: 25px;
+    background-color: rgba(255, 255, 255, 0.25);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 50px;
+    text-decoration: none;
+    font-weight: 500;
+    transition: background-color 0.3s, transform 0.2s;
+    z-index: 100;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.back-btn:hover {
+    background-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-2px);
+}

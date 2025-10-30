@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Drawing Canvas - TwinCanvas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="toolbar main-toolbar">
+        <button class="tool active" data-tool="pen" title="Pen"><i class="fas fa-pencil-alt"></i></button>
+        <div class="color-picker-container">
+            <label for="colorPicker" title="Color"><i class="fas fa-palette"></i></label>
+            <input type="color" id="colorPicker" value="#000000">
+        </div>
+        <div class="stroke-width-container">
+            <label for="strokeWidth" title="Brush Size"><i class="fas fa-paint-brush"></i></label>
+            <input type="range" id="strokeWidth" min="2" max="50" value="5">
+        </div>
+        <button class="tool" data-tool="eraser" title="Eraser"><i class="fas fa-eraser"></i></button>
+    </div>
+
+    <div class="toolbar utility-toolbar">
+        <button id="undoBtn" title="Undo"><i class="fas fa-undo"></i></button>
+        <button id="clearBtn" title="Clear Canvas"><i class="fas fa-trash-alt"></i></button>
+        <button id="saveBtn" title="Save as Image"><i class="fas fa-save"></i></button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/draw.js"></script>
+</body>
+</html>
