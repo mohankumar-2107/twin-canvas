@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.emit('join_room', { room, userName });
 
-    // --- Voice Chat & WebRTC Logic (RESTORED) ---
+    // --- ADDED VOICE CHAT LOGIC ---
     const micBtn = document.getElementById('micBtn');
     const audioContainer = document.getElementById('audio-container');
     let localStream;
@@ -59,9 +59,10 @@ document.addEventListener('DOMContentLoaded', () => {
         localStream.getTracks().forEach(track => track.enabled = !isMuted);
         micIcon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
     });
-    // --- End of Voice Chat Logic ---
+    // --- END OF VOICE CHAT LOGIC ---
 
     function draw(x, y, lastX, lastY, color, width, tool) {
+        // This is your original, working draw function
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = width;
@@ -82,7 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isDrawing = true;
         const { x, y } = getCoordinates(e);
         [lastX, lastY] = [x, y];
-        saveState(); // Save state before drawing starts
+        saveState();
     }
 
     function handleMove(e) {
@@ -124,13 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- ADDED WORKING LOGIC FOR THE 3 BUTTONS ---
-    clearBtn.addEventListener('click', () => {
-        saveState(); // Save state before clearing
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        socket.emit('clear', { room });
-    });
-
+    clearBtn.addEventListener('click', () => { saveState(); ctx.clearRect(0, 0, canvas.width, canvas.height); socket.emit('clear', { room }); });
     saveBtn.addEventListener('click', () => {
         const dataURL = canvas.toDataURL('image/png');
         const link = document.createElement('a');
@@ -138,51 +133,51 @@ document.addEventListener('DOMContentLoaded', () => {
         link.download = `TwinCanvas_${room}.png`;
         link.click();
     });
-    
-    function saveState() {
-        if (history.length > 20) history.shift();
-        history.push(canvas.toDataURL());
-    }
-
+    function saveState() { if (history.length > 20) history.shift(); history.push(canvas.toDataURL()); }
     function undoLast() {
         if (history.length > 0) {
             const lastState = history.pop();
             const img = new Image();
             img.src = lastState;
-            img.onload = () => {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0);
-            };
+            img.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0); };
             socket.emit('undo', { room, state: lastState });
         }
     }
     undoBtn.addEventListener('click', undoLast);
-    // --- END OF BUTTON LOGIC ---
-
     window.addEventListener('resize', () => { /* ... (same as before) ... */ });
 
     // --- SOCKET.IO LISTENERS ---
-    socket.on('update_users', (userNames) => { /* ... (same as before) ... */ });
-    socket.on('draw', (data) => {
-        draw(data.x, data.y, data.lastX, data.lastY, data.color, data.width, data.tool);
+    
+    // --- ADDED WORKING LOGO LOGIC ---
+    socket.on('update_users', (userNames) => {
+        const initialsContainer = document.getElementById('userInitials');
+        initialsContainer.innerHTML = '';
+        userNames.forEach(name => {
+            const initial = name.charAt(0).toUpperCase();
+            const color = nameToColor(name);
+            const circle = document.createElement('div');
+            circle.className = 'initial-circle';
+            circle.textContent = initial;
+            circle.title = name;
+            circle.style.backgroundColor = color;
+            initialsContainer.appendChild(circle);
+        });
     });
-    socket.on('clear', () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-    });
+    // --- END OF LOGO LOGIC ---
+
+    socket.on('draw', (data) => { draw(data.x, data.y, data.lastX, data.lastY, data.color, data.width, data.tool); });
+    socket.on('clear', () => { ctx.clearRect(0, 0, canvas.width, canvas.height); });
     socket.on('undo', (data) => {
         const img = new Image();
         img.src = data.state;
-        img.onload = () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0);
-        };
+        img.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0); };
     });
     
-    // --- WebRTC Socket Listeners (RESTORED) ---
+    // --- ADDED WORKING WEBRTC LISTENERS ---
     const createPeerConnection = (socketId) => {
         const pc = new RTCPeerConnection(configuration);
         peerConnections[socketId] = pc;
-        if(localStream) {
+        if (localStream) {
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
         }
         pc.onicecandidate = e => { if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate }); };
@@ -198,11 +193,38 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         return pc;
     };
-
-    socket.on('existing-voice-users', (userIds) => { /* ... (same as before) ... */ });
-    socket.on('user-joined-voice', (socketId) => { /* ... (same as before) ... */ });
-    socket.on('voice-offer', ({ from, offer }) => { /* ... (same as before) ... */ });
-    socket.on('voice-answer', ({ from, answer }) => { /* ... (same as before) ... */ });
-    socket.on('ice-candidate', ({ from, candidate }) => { /* ... (same as before) ... */ });
-    socket.on('user-left-voice', (socketId) => { /* ... (same as before) ... */ });
+    socket.on('existing-voice-users', (userIds) => {
+        if (!localStream) return;
+        userIds.forEach(id => {
+            const pc = createPeerConnection(id);
+            pc.createOffer().then(offer => pc.setLocalDescription(offer))
+              .then(() => socket.emit('voice-offer', { room, to: id, offer: pc.localDescription }));
+        });
+    });
+    socket.on('user-joined-voice', (socketId) => {
+        if (!localStream) return;
+        const pc = createPeerConnection(socketId);
+        pc.createOffer().then(offer => pc.setLocalDescription(offer))
+          .then(() => socket.emit('voice-offer', { room, to: socketId, offer: pc.localDescription }));
+    });
+    socket.on('voice-offer', ({ from, offer }) => {
+        if (!localStream) return;
+        const pc = createPeerConnection(from);
+        pc.setRemoteDescription(new RTCSessionDescription(offer))
+          .then(() => pc.createAnswer())
+          .then(answer => pc.setLocalDescription(answer))
+          .then(() => socket.emit('voice-answer', { room, to: from, answer: pc.localDescription }));
+    });
+    socket.on('voice-answer', ({ from, answer }) => {
+        peerConnections[from]?.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+    socket.on('ice-candidate', ({ from, candidate }) => {
+        peerConnections[from]?.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+    socket.on('user-left-voice', (socketId) => {
+        peerConnections[socketId]?.close();
+        delete peerConnections[socketId];
+        document.getElementById(`audio-${socketId}`)?.remove();
+    });
+    // --- END OF WEBRTC LISTENERS ---
 });
