@@ -1,7 +1,14 @@
 document.addEventListener('DOMContentLoaded', () => {
     const socket = io('https://twin-canvas.onrender.com'); // Your Render URL
 
-    function nameToColor(name) { /* ... (same as before) ... */ }
+    function nameToColor(name) {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+            hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = hash % 360;
+        return `hsl(${hue}, 70%, 60%)`;
+    }
 
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -63,7 +70,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- ADDED PAINTBRUSH EFFECT ---
         if (tool === 'brush') {
             ctx.globalAlpha = 0.3; // Semi-transparent for a watercolor effect
-            // Vary line width for a more natural stroke
             if (ctx.lineWidth > 40 || ctx.lineWidth < 10) { direction = !direction; }
             ctx.lineWidth += (direction ? 0.5 : -0.5);
         } else {
@@ -76,7 +82,12 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.stroke();
     }
 
-    function handleStart(e) { /* ... (same as before) ... */ }
+    function handleStart(e) {
+        isDrawing = true;
+        const { x, y } = getCoordinates(e);
+        [lastX, lastY] = [x, y];
+        saveState();
+    }
 
     function handleMove(e) {
         if (!isDrawing) return;
@@ -92,11 +103,22 @@ document.addEventListener('DOMContentLoaded', () => {
         [lastX, lastY] = [x, y];
     }
 
-    function handleEnd() { /* ... (same as before) ... */ }
-    function getCoordinates(e) { /* ... (same as before) ... */ }
+    function handleEnd() { isDrawing = false; ctx.beginPath(); }
+
+    function getCoordinates(e) {
+        if (e.touches && e.touches.length > 0) {
+            return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+        return { x: e.clientX, y: e.clientY };
+    }
     
     canvas.addEventListener('mousedown', handleStart);
-    // ... (all other event listeners are the same) ...
+    canvas.addEventListener('mousemove', handleMove);
+    canvas.addEventListener('mouseup', handleEnd);
+    canvas.addEventListener('mouseleave', handleEnd);
+    canvas.addEventListener('touchstart', handleStart);
+    canvas.addEventListener('touchmove', handleMove);
+    canvas.addEventListener('touchend', handleEnd);
 
     toolButtons.forEach(button => {
         button.addEventListener('click', () => {
@@ -106,10 +128,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ... (rest of the file is mostly the same, with WebRTC listeners added below) ...
+    clearBtn.addEventListener('click', () => { /* ... (same as before) ... */ });
+    saveBtn.addEventListener('click', () => { /* ... (same as before) ... */ });
+    undoBtn.addEventListener('click', undoLast);
+    function saveState() { /* ... (same as before) ... */ }
+    function undoLast() { /* ... (same as before) ... */ }
+    window.addEventListener('resize', () => { /* ... (same as before) ... */ });
 
-    // --- SOCKET.IO LISTENERS ---
-    socket.on('update_users', (userNames) => { /* ... (same as before) ... */ });
+    // --- SOCKET.IO LISTENERS (UNCHANGED) ---
+    socket.on('update_users', (userNames) => {
+        const initialsContainer = document.getElementById('userInitials');
+        initialsContainer.innerHTML = ''; // Clear previous initials
+        userNames.forEach(name => {
+            const initial = name.charAt(0).toUpperCase();
+            const color = nameToColor(name); // Generate the unique color
+            const circle = document.createElement('div');
+            circle.className = 'initial-circle';
+            circle.textContent = initial;
+            circle.title = name;
+            circle.style.backgroundColor = color;
+            initialsContainer.appendChild(circle);
+        });
+    });
     socket.on('draw', (data) => {
         draw(data.x, data.y, data.lastX, data.lastY, data.color, data.width, data.tool);
     });
@@ -119,7 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const createPeerConnection = (socketId) => {
         const pc = new RTCPeerConnection(configuration);
         peerConnections[socketId] = pc;
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        if(localStream) {
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        }
         pc.onicecandidate = e => { if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate }); };
         pc.ontrack = e => {
             let audio = document.getElementById(`audio-${socketId}`);
@@ -153,14 +195,14 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('voice-offer', ({ from, offer }) => {
         if (!localStream) return;
         const pc = createPeerConnection(from);
-        pc.setRemoteDescription(offer)
+        pc.setRemoteDescription(new RTCSessionDescription(offer))
           .then(() => pc.createAnswer())
           .then(answer => pc.setLocalDescription(answer))
           .then(() => socket.emit('voice-answer', { room, to: from, answer: pc.localDescription }));
     });
 
     socket.on('voice-answer', ({ from, answer }) => {
-        peerConnections[from]?.setRemoteDescription(answer);
+        peerConnections[from]?.setRemoteDescription(new RTCSessionDescription(answer));
     });
 
     socket.on('ice-candidate', ({ from, candidate }) => {
