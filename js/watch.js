@@ -1,288 +1,91 @@
-document.addEventListener('DOMContentLoaded', () => {
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
 
-  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
+const app = express();
+const server = http.createServer(app);
 
-  let movieStream;
-  let localStream;        // optional mic
-  let isBroadcaster = false;
-  const peerConnections = {}; 
-  const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-  const urlParams = new URLSearchParams(window.location.search);
-  const room = urlParams.get('room');
-  const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
-
-  const videoPlayer = document.getElementById('moviePlayer');
-  const fileInput = document.getElementById('fileInput');
-  const filePrompt = document.getElementById('filePrompt');
-  const playPauseBtn = document.getElementById('playPauseBtn');
-  const skipBtn = document.getElementById('skipBtn');
-  const reverseBtn = document.getElementById('reverseBtn');
-  const micBtn = document.getElementById('micBtn');
-  const audioContainer = document.getElementById('audio-container');
-
-  if (!room) { window.location.href = 'index.html'; return; }
-
-  // We join the room, but we do NOT signal for voice yet.
-  socket.emit('join_movie_room', { room, userName });
-  
-  function nameToColor(name) {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-        hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const hue = hash % 360;
-    return `hsl(${hue}, 70%, 60%)`;
+const io = new socketIo.Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
   }
+});
 
-  // This function tries to play all blocked mic audio
-  function playAllBlockedAudio() {
-    audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
+const PORT = process.env.PORT || 3000;
+const rooms = {};
+
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.id}`);
+
+    socket.on('join_room', (data) => {
+        const { room, userName } = data;
+        socket.join(room);
+        if (!rooms[room]) rooms[room] = [];
+
+        // --- THIS PART IS FOR THE VOICE CHAT ---
+        const existingVoiceUsers = rooms[room].filter(user => user.voiceReady).map(user => user.id);
+        socket.emit('existing-voice-users', existingVoiceUsers);
+
+        rooms[room].push({ id: socket.id, name: userName, voiceReady: false });
+        console.log(`${userName} (${socket.id}) joined room: ${room}`);
+        
+        // --- THIS PART IS FOR THE USER LOGOS ---
+        const userNames = rooms[room].map(user => user.name);
+        io.to(room).emit('update_users', userNames);
     });
-  }
-  
-  // This function tries to open fullscreen
-  function openFullscreen() {
-      const elem = document.documentElement; // Get the whole page
-      if (elem.requestFullscreen) {
-        elem.requestFullscreen();
-      } else if (elem.webkitRequestFullscreen) { /* Safari */
-        elem.webkitRequestFullscreen();
-      } else if (elem.msRequestFullscreen) { /* IE11 */
-        elem.msRequestFullscreen();
-      }
-  }
 
-  function getOrCreatePC(socketId) {
-    let pc = peerConnections[socketId];
-    if (pc) return pc;
+    // --- ADDED VOICE CHAT SIGNALING EVENTS ---
+    socket.on('ready-for-voice', ({ room }) => {
+        const user = rooms[room]?.find(u => u.id === socket.id);
+        if (user) user.voiceReady = true;
+        socket.to(room).emit('user-joined-voice', socket.id);
+    });
 
-    pc = new RTCPeerConnection(configuration);
-    peerConnections[socketId] = pc;
+    socket.on('voice-offer', (data) => {
+        socket.to(data.to).emit('voice-offer', { offer: data.offer, from: socket.id });
+    });
 
-    // Add mic stream ONLY if it's already enabled
-    if (localStream) {
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    }
-    // Add movie stream ONLY if this user is the broadcaster
-    if (isBroadcaster && movieStream) {
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-    }
+    socket.on('voice-answer', (data) => {
+        socket.to(data.to).emit('voice-answer', { answer: data.answer, from: socket.id });
+    });
 
-    pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
-    };
+    socket.on('ice-candidate', (data) => {
+        socket.to(data.to).emit('ice-candidate', { candidate: data.candidate, from: socket.id });
+    });
+    // --- END OF VOICE CHAT LOGIC ---
 
-    pc.ontrack = (event) => {
-      const stream = event.streams[0];
-      
-      if (event.track.kind === 'video') {
-        filePrompt.style.display = 'none';
-        videoPlayer.srcObject = stream; 
-        videoPlayer.muted = false;
+    socket.on('draw', (data) => {
+        console.log(`Draw event received for room: ${data.room}`);
+        socket.to(data.room).emit('draw', data);
+    });
 
-        videoPlayer.play().catch(() => {
-          // --- "TAP TO ENABLE" BUTTON RESTORED ---
-          const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
-          btn.style = `
-            position: fixed; bottom: 20px; right: 20px; /* Positioned to the right */
-            background: #7c5cff; color: white; border: none;
-            padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
-            z-index: 100;
-          `;
-          document.body.appendChild(btn);
-          btn.onclick = () => { 
-              videoPlayer.play().then(() => btn.remove());
-              openFullscreen(); // Trigger fullscreen
-              playAllBlockedAudio(); // Try to play mic audio
-          };
-        });
+    socket.on('clear', (data) => {
+        socket.to(data.room).emit('clear');
+    });
 
-        // Controls are enabled for everyone
-        playPauseBtn.disabled = false;
-        skipBtn.disabled = false;
-        reverseBtn.disabled = false;
-      }
+    socket.on('undo', (data) => {
+        socket.to(data.room).emit('undo', { state: data.state });
+    });
 
-      if (event.track.kind === "audio") {
-        // This is a mic-only stream
-        if (stream.getVideoTracks().length === 0) {
-            let audio = document.getElementById(`audio-${socketId}`);
-            if (!audio) {
-              audio = document.createElement("audio");
-              audio.id = `audio-${socketId}`;
-              audio.controls = false;
-              audioContainer.appendChild(audio);
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.id}`);
+        for (const room in rooms) {
+            const userIndex = rooms[room].findIndex(user => user.id === socket.id);
+            if (userIndex !== -1) {
+                rooms[room].splice(userIndex, 1);
+                // --- THIS PART IS FOR VOICE & LOGOS ---
+                io.to(room).emit('user-left-voice', socket.id); 
+                const userNames = rooms[room].map(user => user.name);
+                io.to(room).emit('update_users', userNames);
+                // --- END OF FIX ---
+                if (rooms[room].length === 0) delete rooms[room];
+                break;
             }
-            audio.srcObject = stream;
-            // Don't try to play here, wait for user click
-            console.warn(`Mic audio for ${socketId} received. Waiting for interaction to play.`);
         }
-      }
-    };
-    return pc;
-  }
-
-  async function sendOffer(to) {
-    const pc = getOrCreatePC(to);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('voice-offer', { room, to, offer: pc.localDescription });
-  }
-
-  async function renegotiateAll() {
-    for (const id of Object.keys(peerConnections)) {
-      await sendOffer(id);
-    }
-  }
-
-  fileInput.addEventListener('change', async () => {
-    isBroadcaster = true;
-    const file = fileInput.files[0];
-    if (!file) return;
-
-    videoPlayer.src = URL.createObjectURL(file);
-    videoPlayer.muted = false; 
-    
-    await videoPlayer.play().catch(() => {});
-    filePrompt.style.display = 'none';
-
-    // This click unblocks audio
-    playAllBlockedAudio();
-
-    movieStream = videoPlayer.captureStream(); 
-
-    for (const id of Object.keys(peerConnections)) {
-      const pc = getOrCreatePC(id);
-      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
-      pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      pc.getSenders().filter(s => {
-          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
-      }).forEach(s => pc.removeTrack(s));
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-    }
-    await renegotiateAll();
-  });
-
-  // --- Playback sync (Optimistic UI) ---
-  playPauseBtn.addEventListener('click', () => {
-    if (videoPlayer.paused) {
-        videoPlayer.play();
-        socket.emit('video_play', { room });
-    } else {
-        videoPlayer.pause();
-        socket.emit('video_pause', { room });
-    }
-  });
-  skipBtn.addEventListener('click', () => {
-    const newTime = videoPlayer.currentTime + 10;
-    videoPlayer.currentTime = newTime;
-    socket.emit('video_seek', { room, time: newTime });
-  });
-  reverseBtn.addEventListener('click', () => {
-    const newTime = videoPlayer.currentTime - 10;
-    videoPlayer.currentTime = newTime;
-    socket.emit('video_seek', { room, time: newTime });
-  });
-
-  videoPlayer.addEventListener('play', () => {
-    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-  });
-  videoPlayer.addEventListener('pause', () => {
-    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
-  });
-
-  socket.on('video_play', () => {
-    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
-  });
-  socket.on('video_pause', () => {
-    if (!videoPlayer.paused) videoPlayer.pause();
-  });
-  socket.on('video_seek', (time) => {
-    if (Math.abs(videoPlayer.currentTime - time) > 1) {
-        videoPlayer.currentTime = time;
-    }
-  });
-
-  // --- MIC LOGIC (like drawing room) ---
-  let micOn = false;
-  micBtn.addEventListener('click', async () => {
-    micOn = !micOn;
-    const icon = micBtn.querySelector('i');
-
-    if (micOn && !localStream) {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: true } 
-        });
-        
-        // This is the drawing room logic: signal readiness *after* getting mic
-        socket.emit('ready-for-voice', { room });
-        
-        // This click unblocks audio
-        playAllBlockedAudio();
-
-      } catch (e) {
-        console.error("Mic blocked:", e);
-        micOn = false;
-      }
-    }
-
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.enabled = micOn);
-    }
-    icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
-  });
-
-  // --- Signaling Events ---
-  socket.on('update_users', (userNames) => {
-    const initialsContainer = document.getElementById('userInitials');
-    initialsContainer.innerHTML = ''; 
-    userNames.forEach(name => {
-        const initial = name.charAt(0).toUpperCase();
-        const color = nameToColor(name);
-        const circle = document.createElement('div');
-        circle.className = 'initial-circle';
-        circle.textContent = initial;
-        circle.title = name;
-        circle.style.backgroundColor = color;
-        initialsContainer.appendChild(circle);
     });
-  });
+});
 
-  // This is the drawing room logic, it's more robust
-  socket.on('existing-voice-users', (ids) => {
-    if (!localStream) return; // Don't call if mic isn't ready
-    ids.forEach(id => {
-      if (id !== socket.id) sendOffer(id);
-    });
-  });
-  socket.on('user-joined-voice', ({ socketId }) => {
-    if (!localStream) return; // Don't call if mic isn't ready
-    if (socketId !== socket.id) sendOffer(socketId);
-  });
-  
-  socket.on('voice-offer', async ({ from, offer }) => {
-    if (!localStream) return; // Don't answer if mic isn't ready
-    const pc = getOrCreatePC(from);
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
-  });
-  socket.on('voice-answer', async ({ from, answer }) => {
-    const pc = getOrCreatePC(from);
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  });
-  socket.on('ice-candidate', async ({ from, candidate }) => {
-    const pc = getOrCreatePC(from);
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
-  });
-  socket.on('user-left-voice', (socketId) => {
-    peerConnections[socketId]?.close();
-    delete peerConnections[socketId];
-    document.getElementById(`audio-${socketId}`)?.remove();
-  });
+server.listen(PORT, () => {
+    console.log(`TwinCanvas server running on http://localhost:${PORT}`);
 });
