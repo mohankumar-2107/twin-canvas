@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const userName = userNameInput.value.trim();
         if (userName) {
             localStorage.setItem('twinCanvasUserName', userName);
-            window.location.href = 'room.html';
+            window.location.href = 'choice.html';
         } else {
             // This adds a subtle shake animation for feedback
             userNameInput.style.animation = 'shake 0.5s ease';
