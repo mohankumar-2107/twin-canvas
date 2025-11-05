@@ -26,8 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
-  
-  // --- BUG 1: REMOVED 'ready-for-voice' from here. ---
+  socket.emit('ready-for-voice', { room });
   
   function nameToColor(name) {
     let hash = 0;
@@ -35,15 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
     const hue = hash % 360;
-    // --- SYNTAX FIX ---
     return `hsl(${hue}, 70%, 60%)`;
-  }
-
-  // --- THIS IS THE AUDIO "UNBLOCKING" FUNCTION ---
-  function playAllBlockedAudio() {
-    audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
-    });
   }
 
   function getOrCreatePC(socketId) {
@@ -64,14 +55,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
 
-    // --- BUG 2: Corrected 'ontrack' logic ---
     pc.ontrack = (event) => {
       const stream = event.streams[0];
       
-      // Check if this stream has video. If yes, it's the MOVIE.
-      if (stream.getVideoTracks().length > 0) {
+      if (event.track.kind === 'video') {
         filePrompt.style.display = 'none';
-        videoPlayer.srcObject = stream; // This stream has BOTH video and movie audio
+        videoPlayer.srcObject = stream; 
         videoPlayer.muted = false;
 
         videoPlayer.play().catch(() => {
@@ -83,35 +72,31 @@ document.addEventListener('DOMContentLoaded', () => {
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
           `;
           document.body.appendChild(btn);
-          // This click on the "Tap to enable" button ALSO counts as an interaction
-          btn.onclick = () => { 
-              videoPlayer.play().then(() => btn.remove());
-              playAllBlockedAudio(); // Try to play mic audio too
-          };
+          btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
       }
-      // If the stream has NO video, it's the MIC.
-      else if (stream.getVideoTracks().length === 0) { 
-          // --- SYNTAX FIX ---
-          let audio = document.getElementById(`audio-${socketId}`);
-          if (!audio) {
-            audio = document.createElement("audio");
-            audio.id = `audio-${socketId}`; // --- SYNTAX FIX ---
-            audio.controls = false;
-            audioContainer.appendChild(audio);
-          }
-          audio.srcObject = stream;
-          audio.play().catch(e => {
-              console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
-          });
+
+      if (event.track.kind === "audio") {
+        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
+            let audio = document.getElementById(`audio-${socketId}`);
+            if (!audio) {
+              audio = document.createElement("audio");
+              audio.id = `audio-${socketId}`;
+              // audio.autoplay = true; // This will be blocked
+              audio.controls = false;
+              audioContainer.appendChild(audio);
+            }
+            audio.srcObject = stream;
+            audio.play().catch(e => {
+                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
+            });
+        }
       }
     };
-    // --- END OF BUG 2 FIX ---
-    
     return pc;
   }
 
@@ -139,9 +124,13 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
-    // This click on "Choose File" is a user interaction.
-    // Use it to unblock all waiting mic audio streams.
-    playAllBlockedAudio();
+    // --- THIS IS THE FIX ---
+    // This "click" on the file input counts as a user interaction.
+    // We can now safely play any blocked audio streams from our friends.
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
+    });
+    // --- END OF FIX ---
 
     movieStream = videoPlayer.captureStream(); 
 
@@ -202,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- Mic button (This is now the "Go Live" button) ---
+  // --- Mic button ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -214,17 +203,16 @@ document.addEventListener('DOMContentLoaded', () => {
             audio: { echoCancellation: true } 
         });
         
-        // --- BUG 1 FIX: Send 'ready' signal AFTER getting mic ---
-        socket.emit('ready-for-voice', { room });
-        
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
         await renegotiateAll();
 
-        // This click counts as user interaction, unblocking audio
-        playAllBlockedAudio();
+        // This click also counts as user interaction
+        audioContainer.querySelectorAll('audio').forEach(audio => {
+            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
+        });
 
       } catch (e) {
         console.error("Mic blocked:", e);
@@ -239,8 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Signaling Events ---
-  
-  // --- LOGO FIX: Added this listener back in ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
@@ -255,21 +241,15 @@ document.addEventListener('DOMContentLoaded', () => {
         initialsContainer.appendChild(circle);
     });
   });
-  // --- END OF LOGO FIX ---
 
   socket.on('existing-voice-users', (ids) => {
-    // --- MIC FIX ---
-    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
-    // --- MIC FIX ---
-    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
-  
   socket.on('voice-offer', async ({ from, offer }) => {
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -288,7 +268,6 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('user-left-voice', (socketId) => {
     peerConnections[socketId]?.close();
     delete peerConnections[socketId];
-    // --- SYNTAX FIX ---
     document.getElementById(`audio-${socketId}`)?.remove();
   });
 });
