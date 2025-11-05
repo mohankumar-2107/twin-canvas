@@ -37,6 +37,13 @@ document.addEventListener('DOMContentLoaded', () => {
     return `hsl(${hue}, 70%, 60%)`;
   }
 
+  // --- THIS IS THE AUDIO "UNBLOCKING" FUNCTION ---
+  function playAllBlockedAudio() {
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
+    });
+  }
+
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
@@ -72,7 +79,11 @@ document.addEventListener('DOMContentLoaded', () => {
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
           `;
           document.body.appendChild(btn);
-          btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
+          // This click on the "Tap to enable" button ALSO counts as an interaction
+          btn.onclick = () => { 
+              videoPlayer.play().then(() => btn.remove());
+              playAllBlockedAudio(); // Try to play mic audio too
+          };
         });
 
         playPauseBtn.disabled = false;
@@ -86,14 +97,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              // audio.autoplay = true; // This will be blocked
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
-            audio.play().catch(e => {
-                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
-            });
+            
+            // --- AUDIO FIX ---
+            // Don't try to play here. Just attach the stream.
+            // The user interaction (mic click or file click) will play it.
+            // audio.play().catch(...) <-- REMOVED
         }
       }
     };
@@ -124,12 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
-    // --- THIS IS THE FIX ---
-    // This "click" on the file input counts as a user interaction.
-    // We can now safely play any blocked audio streams from our friends.
-    audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
-    });
+    // --- AUDIO FIX ---
+    // This click on "Choose File" is a user interaction.
+    // Use it to unblock all waiting mic audio streams.
+    playAllBlockedAudio();
     // --- END OF FIX ---
 
     movieStream = videoPlayer.captureStream(); 
@@ -209,10 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         await renegotiateAll();
 
-        // This click also counts as user interaction
-        audioContainer.querySelectorAll('audio').forEach(audio => {
-            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
-        });
+        // --- AUDIO FIX ---
+        // This click on the mic button is a user interaction.
+        // Use it to unblock all waiting mic audio streams.
+        playAllBlockedAudio();
+        // --- END OF FIX ---
 
       } catch (e) {
         console.error("Mic blocked:", e);
