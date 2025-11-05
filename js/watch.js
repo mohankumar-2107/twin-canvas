@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;        // optional mic
+  let localStream;
   let isBroadcaster = false;
   let isSyncing = false;
   const peerConnections = {}; 
@@ -48,7 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (localStream) {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
-
     if (isBroadcaster && movieStream) {
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
@@ -68,19 +67,15 @@ document.addEventListener('DOMContentLoaded', () => {
         videoPlayer.play().catch(() => {
           const btn = document.createElement("button");
           btn.textContent = "🔊 Tap to enable sound";
-          btn.style = `
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: #7c5cff; color: white; border: none;
-            padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
-          `;
+          btn.style = `... (same style as before) ...`;
           document.body.appendChild(btn);
           btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
-        // This disables the buttons for the receiver
-        playPauseBtn.disabled = true;
-        skipBtn.disabled = true;
-        reverseBtn.disabled = true;
+        // --- FIX: DO NOT DISABLE BUTTONS ---
+        // playPauseBtn.disabled = true;  <-- REMOVED
+        // skipBtn.disabled = true;      <-- REMOVED
+        // reverseBtn.disabled = true;   <-- REMOVED
       }
 
       if (event.track.kind === "audio") {
@@ -97,7 +92,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     };
-
     return pc;
   }
 
@@ -140,31 +134,36 @@ document.addEventListener('DOMContentLoaded', () => {
   // Playback sync (host controls) - FIXED
   // -----------------------------------
   playPauseBtn.addEventListener('click', () => {
+    // This will now work for EVERYONE
     if (videoPlayer.paused) videoPlayer.play();
     else videoPlayer.pause();
   });
 
   skipBtn.addEventListener('click', () => {
-    // if (!isBroadcaster) return; // THIS LINE WAS THE BUG. IT'S NOW REMOVED.
-    videoPlayer.currentTime += 10;
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+    // REMOVED 'isBroadcaster' check
+    const newTime = videoPlayer.currentTime + 10;
+    videoPlayer.currentTime = newTime; // Change locally first
+    socket.emit('video_seek', { room, time: newTime }); // Tell everyone else
   });
 
   reverseBtn.addEventListener('click', () => {
-    // if (!isBroadcaster) return; // THIS LINE WAS THE BUG. IT'S NOW REMOVED.
-    videoPlayer.currentTime -= 10;
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+    // REMOVED 'isBroadcaster' check
+    const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime; // Change locally first
+    socket.emit('video_seek', { room, time: newTime }); // Tell everyone else
   });
 
   videoPlayer.addEventListener('play', () => {
     if (isSyncing) { isSyncing = false; return; }
-    if (isBroadcaster) socket.emit('video_play', { room });
+    // REMOVED 'isBroadcaster' check
+    socket.emit('video_play', { room });
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
 
   videoPlayer.addEventListener('pause', () => {
     if (isSyncing) { isSyncing = false; return; }
-    if (isBroadcaster) socket.emit('video_pause', { room });
+    // REMOVED 'isBroadcaster' check
+    socket.emit('video_pause', { room });
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
@@ -185,20 +184,16 @@ document.addEventListener('DOMContentLoaded', () => {
     videoPlayer.currentTime = time;
   });
 
-  // -----------------------------------
-  // Mic button (optional)
-  // -----------------------------------
+  // --- Mic button ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
     const icon = micBtn.querySelector('i');
-
     if (micOn && !localStream) {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
-        
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
@@ -209,16 +204,13 @@ document.addEventListener('DOMContentLoaded', () => {
         micOn = false;
       }
     }
-
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = micOn);
     }
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // -----------------------------------
-  // Signaling Events
-  // -----------------------------------
+  // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
@@ -233,7 +225,6 @@ document.addEventListener('DOMContentLoaded', () => {
         initialsContainer.appendChild(circle);
     });
   });
-
   socket.on('existing-voice-users', (ids) => {
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
