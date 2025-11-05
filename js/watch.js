@@ -3,9 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;
+  let localStream;        // optional mic
   let isBroadcaster = false;
-  // REMOVED 'isSyncing' as it's no longer needed with this logic
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -16,11 +15,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoPlayer = document.getElementById('moviePlayer');
   const fileInput = document.getElementById('fileInput');
   const filePrompt = document.getElementById('filePrompt');
-
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
-
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
@@ -76,20 +73,30 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
-        // We no longer disable buttons for User 2
+        playPauseBtn.disabled = false;
+        skipBtn.disabled = false;
+        reverseBtn.disabled = false;
       }
 
       if (event.track.kind === "audio") {
-        if (stream.getVideoTracks().length === 0) {
+        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              audio.autoplay = true;
+              // audio.autoplay = true; // This will be blocked
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
+            
+            // --- FIX #1: TRY TO PLAY THE MIC AUDIO ---
+            // It will fail if the user hasn't clicked, but will
+            // succeed if they have (e.g., by clicking their own mic).
+            audio.play().catch(e => {
+                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
+            });
+            // --- END OF FIX #1 ---
         }
       }
     };
@@ -124,41 +131,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
     for (const id of Object.keys(peerConnections)) {
       const pc = getOrCreatePC(id);
+      
+      // --- FIX #2: SAFER WAY TO PROTECT MIC STREAM ---
+      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+      
+      // Remove all old video tracks
       pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      pc.getSenders().filter(s => s.track && s.track.kind === 'audio' && s.track !== localStream?.getAudioTracks()[0]).forEach(s => pc.removeTrack(s));
+      
+      // Remove old audio tracks THAT ARE NOT the mic
+      pc.getSenders().filter(s => {
+          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
+      }).forEach(s => pc.removeTrack(s));
+      
+      // Add the new movie tracks (video + audio)
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+      // --- END OF FIX #2 ---
     }
     await renegotiateAll();
   });
 
-  // -----------------------------------
-  // Playback sync - FINAL FIX
-  // -----------------------------------
-
-  // ONLY button clicks send events.
-  // This works for User 1 AND User 2.
+  // --- Playback sync (Optimistic UI) ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
+        videoPlayer.play();
         socket.emit('video_play', { room });
     } else {
+        videoPlayer.pause();
         socket.emit('video_pause', { room });
     }
   });
 
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    // We only emit the event. The server will tell everyone (including us)
-    // to seek, which guarantees perfect sync.
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
-  // These listeners ONLY update the button icon. They do not send events.
-  // This breaks the feedback loop.
   videoPlayer.addEventListener('play', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
@@ -167,52 +181,55 @@ document.addEventListener('DOMContentLoaded', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
-  // Socket listeners are the ONLY thing that changes the player state.
   socket.on('video_play', () => {
-    videoPlayer.play().catch(()=>{});
-    // The 'play' event above will handle the icon change.
+    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
   });
-
   socket.on('video_pause', () => {
-    videoPlayer.pause();
-    // The 'pause' event above will handle the icon change.
+    if (!videoPlayer.paused) videoPlayer.pause();
   });
-
   socket.on('video_seek', (time) => {
-    videoPlayer.currentTime = time;
+    if (Math.abs(videoPlayer.currentTime - time) > 1) {
+        videoPlayer.currentTime = time;
+    }
   });
 
-  // -----------------------------------
-  // Mic button
-  // -----------------------------------
+  // --- Mic button ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
     const icon = micBtn.querySelector('i');
+
     if (micOn && !localStream) {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
+        
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
         await renegotiateAll();
+
+        // --- FIX #1 (Part B): Force-play all waiting mic audio ---
+        // This click counts as user interaction, unblocking audio
+        audioContainer.querySelectorAll('audio').forEach(audio => {
+            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
+        });
+
       } catch (e) {
         console.error("Mic blocked:", e);
         micOn = false;
       }
     }
+
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = micOn);
     }
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // -----------------------------------
-  // Signaling Events
-  // -----------------------------------
+  // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
