@@ -1,6 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
     const socket = io('https://twin-canvas.onrender.com'); // Your Render URL
     
+    // --- Global variables for streaming ---
+    let movieStream;
+    let isBroadcaster = false;
+
     // --- HELPER FUNCTION FOR LOGOS ---
     function nameToColor(name) {
         let hash = 0;
@@ -28,18 +32,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!room) { window.location.href = 'index.html'; return; }
     
-    // Use the new event to join the movie room
     socket.emit('join_movie_room', { room, userName });
 
-    // --- Video Sync Logic ---
+    // --- Video Logic ---
     fileInput.addEventListener('change', () => {
+        // --- THIS IS THE NEW STREAMING LOGIC FOR USER 1 ---
+        isBroadcaster = true;
         const file = fileInput.files[0];
         if (file) {
             videoPlayer.src = URL.createObjectURL(file);
+            videoPlayer.muted = true; // Mute local player to prevent echo
+            videoPlayer.play();
             filePrompt.style.display = 'none';
+
+            // Capture the video/audio stream from the video element
+            movieStream = videoPlayer.captureStream();
+
+            // Send this stream to all existing and future peer connections
+            for (const peerId in peerConnections) {
+                movieStream.getTracks().forEach(track => {
+                    peerConnections[peerId].addTrack(track, movieStream);
+                });
+            }
         }
     });
 
+    // --- Video Sync Logic (Still needed for the broadcaster) ---
     playPauseBtn.addEventListener('click', () => {
         if (videoPlayer.paused) {
             videoPlayer.play();
@@ -61,13 +79,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Send video events (but prevent loops)
     videoPlayer.addEventListener('play', () => {
         if (isSyncing) { isSyncing = false; return; }
-        socket.emit('video_play', { room });
+        if (isBroadcaster) { // Only the broadcaster sends sync events
+            socket.emit('video_play', { room });
+        }
         playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
     });
 
     videoPlayer.addEventListener('pause', () => {
         if (isSyncing) { isSyncing = false; return; }
-        socket.emit('video_pause', { room });
+        if (isBroadcaster) { // Only the broadcaster sends sync events
+            socket.emit('video_pause', { room });
+        }
         playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
     });
 
@@ -89,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         videoPlayer.currentTime = time;
     });
 
-    // --- ADDED VOICE CHAT LOGIC ---
+    // --- WORKING Voice Chat Logic ---
     const micBtn = document.getElementById('micBtn');
     const audioContainer = document.getElementById('audio-container');
     let localStream;
@@ -109,10 +131,8 @@ document.addEventListener('DOMContentLoaded', () => {
         localStream.getTracks().forEach(track => track.enabled = !isMuted);
         micIcon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
     });
-    // --- END OF VOICE CHAT LOGIC ---
 
-
-    // --- ADDED SOCKET LISTENERS FOR LOGOS & VOICE ---
+    // --- WORKING Socket Listeners for Logos & Voice ---
     socket.on('update_users', (userNames) => {
         const initialsContainer = document.getElementById('userInitials');
         initialsContainer.innerHTML = ''; 
@@ -131,23 +151,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const createPeerConnection = (socketId) => {
         const pc = new RTCPeerConnection(configuration);
         peerConnections[socketId] = pc;
+        
+        // Add microphone stream (if it exists)
         if (localStream) {
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
         }
+        
+        // --- ADDED THIS ---
+        // If this user is the broadcaster, add the movie stream too
+        if (isBroadcaster && movieStream) {
+            movieStream.getTracks().forEach(track => pc.addTrack(track, movieStream));
+        }
+        
         pc.onicecandidate = e => { if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate }); };
-        pc.ontrack = e => {
-            let audio = document.getElementById(`audio-${socketId}`);
-            if (!audio) {
-                audio = document.createElement('audio');
-                audio.id = `audio-${socketId}`;
-                audio.autoplay = true;
-                audioContainer.appendChild(audio);
+        
+        // --- THIS IS THE NEW RECEIVER LOGIC ---
+        pc.ontrack = (event) => {
+            if (event.track.kind === 'video') {
+                // This is the movie's video track.
+                filePrompt.style.display = 'none'; // Hide prompt for User 2
+                videoPlayer.srcObject = event.streams[0];
+                videoPlayer.play();
+                // Disable controls for the receiver
+                playPauseBtn.disabled = true;
+                skipBtn.disabled = true;
+                reverseBtn.disabled = true;
+
+            } else if (event.track.kind === 'audio') {
+                // This is an audio track. Is it the movie's or the mic's?
+                // If the stream also has video, it's the movie audio (handled above)
+                // If it's audio-only, it's the mic.
+                if (event.streams[0].getVideoTracks().length === 0) {
+                    let audio = document.getElementById(`audio-${socketId}`);
+                    if (!audio) {
+                        audio = document.createElement('audio');
+                        audio.id = `audio-${socketId}`;
+                        audio.autoplay = true;
+                        audioContainer.appendChild(audio);
+                    }
+                    audio.srcObject = event.streams[0];
+                }
             }
-            audio.srcObject = e.streams[0];
         };
         return pc;
     };
     
+    // --- All other WebRTC listeners are unchanged ---
     socket.on('existing-voice-users', (userIds) => {
         if (!localStream) return;
         userIds.forEach(id => {
@@ -186,5 +235,4 @@ document.addEventListener('DOMContentLoaded', () => {
         delete peerConnections[socketId];
         document.getElementById(`audio-${socketId}`)?.remove();
     });
-    // --- END OF ADDED LISTENERS ---
 });
