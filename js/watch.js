@@ -30,34 +30,27 @@ document.addEventListener('DOMContentLoaded', () => {
     
     socket.emit('join_movie_room', { room, userName });
 
-    // --- THIS IS THE UPDATED SECTION ---
+    // --- Broadcaster File Select Logic ---
     fileInput.addEventListener('change', () => {
         isBroadcaster = true;
         const file = fileInput.files[0];
         if (file) {
             videoPlayer.src = URL.createObjectURL(file);
-            videoPlayer.muted = true; // Mute local player to prevent echo
+            videoPlayer.muted = true; 
             videoPlayer.play();
             filePrompt.style.display = 'none';
 
-            // Capture the video/audio stream from the video element
             movieStream = videoPlayer.captureStream();
 
-            // --- NEW RENegotiation LOGIC ---
-            // We must re-negotiate the connection to add this new stream
+            // --- Renegotiation Logic (sends new offer) ---
             for (const peerId in peerConnections) {
                 const pc = peerConnections[peerId];
-                
-                // Add the new movie tracks
                 movieStream.getTracks().forEach(track => {
                     pc.addTrack(track, movieStream);
                 });
-
-                // Create a new offer to tell the other user about the new tracks
                 pc.createOffer()
                     .then(offer => pc.setLocalDescription(offer))
                     .then(() => {
-                        // Send the new offer to the other peer
                         socket.emit('voice-offer', { 
                             room, 
                             offer: pc.localDescription, 
@@ -67,17 +60,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-    // --- END OF UPDATED SECTION ---
 
+    // --- Video Control Sync Logic ---
     playPauseBtn.addEventListener('click', () => {
         if (videoPlayer.paused) { videoPlayer.play(); } else { videoPlayer.pause(); }
     });
-
     skipBtn.addEventListener('click', () => {
         videoPlayer.currentTime += 10;
         socket.emit('video_seek', { room, time: videoPlayer.currentTime });
     });
-
     reverseBtn.addEventListener('click', () => {
         videoPlayer.currentTime -= 10;
         socket.emit('video_seek', { room, time: videoPlayer.currentTime });
@@ -88,7 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isBroadcaster) { socket.emit('video_play', { room }); }
         playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
     });
-
     videoPlayer.addEventListener('pause', () => {
         if (isSyncing) { isSyncing = false; return; }
         if (isBroadcaster) { socket.emit('video_pause', { room }); }
@@ -99,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('video_pause', () => { isSyncing = true; videoPlayer.pause(); playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; });
     socket.on('video_seek', (time) => { isSyncing = true; videoPlayer.currentTime = time; });
 
-    // --- WORKING Voice Chat Logic ---
+    // --- Voice Chat & Logo Logic ---
     const micBtn = document.getElementById('micBtn');
     const audioContainer = document.getElementById('audio-container');
     let localStream;
@@ -116,11 +106,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 socket.emit('ready-for-voice', { room });
             } catch (error) { console.error("Mic access error.", error); isMuted = true; return; }
         }
-        localStream.getTracks().forEach(track => track.enabled = !isMtued);
+        localStream.getTracks().forEach(track => track.enabled = !isMuted);
         micIcon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
     });
 
-    // --- WORKING Socket Listeners for Logos & Voice ---
     socket.on('update_users', (userNames) => {
         const initialsContainer = document.getElementById('userInitials');
         initialsContainer.innerHTML = ''; 
@@ -144,28 +133,21 @@ document.addEventListener('DOMContentLoaded', () => {
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
         }
         
-        // --- THIS IS THE KEY ---
-        // If this user is the broadcaster, add the movie stream
         if (isBroadcaster && movieStream) {
             movieStream.getTracks().forEach(track => pc.addTrack(track, movieStream));
         }
         
         pc.onicecandidate = e => { if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate }); };
         
-        // --- THIS IS USER 2's RECEIVER LOGIC ---
         pc.ontrack = (event) => {
             if (event.track.kind === 'video') {
-                // IT'S THE MOVIE!
-                filePrompt.style.display = 'none'; // Hide "Choose file"
+                filePrompt.style.display = 'none';
                 videoPlayer.srcObject = event.streams[0];
                 videoPlayer.play();
-                // User 2 cannot control the video, only User 1
                 playPauseBtn.disabled = true;
                 skipBtn.disabled = true;
                 reverseBtn.disabled = true;
             } else if (event.track.kind === 'audio') {
-                // This is an audio track
-                // If the stream has no video, it's a MIC.
                 if (event.streams[0].getVideoTracks().length === 0) {
                     let audio = document.getElementById(`audio-${socketId}`);
                     if (!audio) {
@@ -197,14 +179,23 @@ document.addEventListener('DOMContentLoaded', () => {
           .then(() => socket.emit('voice-offer', { room, to: socketId, offer: pc.localDescription }));
     });
 
+    // --- THIS IS THE CRITICAL FIX ---
     socket.on('voice-offer', ({ from, offer }) => {
-        if (!localStream) return;
-        const pc = createPeerConnection(from);
+        if (!localStream) return; // Wait for mic
+        
+        // Find the EXISTING connection, or create one if it doesn't exist
+        let pc = peerConnections[from];
+        if (!pc) {
+            pc = createPeerConnection(from);
+        }
+        
+        // Now set the remote description on the correct connection
         pc.setRemoteDescription(new RTCSessionDescription(offer))
           .then(() => pc.createAnswer())
           .then(answer => pc.setLocalDescription(answer))
           .then(() => socket.emit('voice-answer', { room, to: from, answer: pc.localDescription }));
     });
+    // --- END OF FIX ---
 
     socket.on('voice-answer', ({ from, answer }) => {
         peerConnections[from]?.setRemoteDescription(new RTCSessionDescription(answer));
