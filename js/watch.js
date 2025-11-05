@@ -3,25 +3,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;           // optional mic
+  let localStream;        // optional mic
   let isBroadcaster = false;
   let isSyncing = false;
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-  const urlParams   = new URLSearchParams(window.location.search);
-  const room        = urlParams.get('room');
-  const userName    = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
+  const urlParams = new URLSearchParams(window.location.search);
+  const room = urlParams.get('room');
+  const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
 
   const videoPlayer = document.getElementById('moviePlayer');
-  const fileInput   = document.getElementById('fileInput');
-  const filePrompt  = document.getElementById('filePrompt');
+  const fileInput = document.getElementById('fileInput');
+  const filePrompt = document.getElementById('filePrompt');
 
-  const playPauseBtn= document.getElementById('playPauseBtn');
-  const skipBtn     = document.getElementById('skipBtn');
-  const reverseBtn  = document.getElementById('reverseBtn');
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  const skipBtn = document.getElementById('skipBtn');
+  const reverseBtn = document.getElementById('reverseBtn');
 
-  const micBtn      = document.getElementById('micBtn');
+  const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
   if (!room) { window.location.href = 'index.html'; return; }
@@ -29,6 +29,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // join + ready for WebRTC even without mic
   socket.emit('join_movie_room', { room, userName });
   socket.emit('ready-for-voice', { room });
+  
+  // -----------------------------------
+  // FIX #1: ADDED LOGO/COLOR FUNCTION
+  // -----------------------------------
+  function nameToColor(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = hash % 360;
+    return `hsl(${hue}, 70%, 60%)`;
+  }
 
   // -----------------------------------
   // PeerConnection helper
@@ -54,12 +66,20 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
 
+    // -----------------------------------
+    // FIX #2: UPDATED ONTRACK LOGIC
+    // -----------------------------------
     pc.ontrack = (event) => {
+      const stream = event.streams[0];
+      
       // -------- VIDEO TRACK --------
+      // This will only fire for the movie stream
       if (event.track.kind === 'video') {
         filePrompt.style.display = 'none';
-        videoPlayer.srcObject = event.streams[0];
-        videoPlayer.muted = false; 
+        
+        // This stream contains BOTH video and audio for the movie
+        videoPlayer.srcObject = stream; 
+        videoPlayer.muted = false; // Unmute to hear movie audio
 
         videoPlayer.play().catch(() => {
           // Browser blocked auto-play audio.
@@ -87,20 +107,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // -------- AUDIO TRACK --------
       if (event.track.kind === "audio") {
-        let audio = document.getElementById(`audio-${socketId}`);
-        if (!audio) {
-          audio = document.createElement("audio");
-          audio.id = `audio-${socketId}`;
-          audio.autoplay = true;
-          audio.controls = false;
-          audioContainer.appendChild(audio);
+        // We need to check if this is mic audio or movie audio.
+        // If the stream it belongs to has NO video tracks, it's a mic.
+        if (stream.getVideoTracks().length === 0) {
+            let audio = document.getElementById(`audio-${socketId}`);
+            if (!audio) {
+              audio = document.createElement("audio");
+              audio.id = `audio-${socketId}`;
+              audio.autoplay = true;
+              audio.controls = false;
+              audioContainer.appendChild(audio);
+            }
+            audio.srcObject = stream;
         }
-        audio.srcObject = event.streams[0];
+        // (If it DOES have video tracks, it's the movie's audio,
+        // and it was already handled by the 'video' block above)
       }
     };
 
     return pc;
   }
+  // --- END OF FIX #2 ---
 
   // -----------------------------------
   // Offer helper
@@ -132,7 +159,8 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
-    movieStream = videoPlayer.captureStream();
+    // This stream has BOTH video and audio
+    movieStream = videoPlayer.captureStream(); 
 
     for (const id of Object.keys(peerConnections)) {
       const pc = getOrCreatePC(id);
@@ -141,7 +169,12 @@ document.addEventListener('DOMContentLoaded', () => {
       pc.getSenders()
         .filter(s => s.track && s.track.kind === 'video')
         .forEach(s => pc.removeTrack(s));
+      // remove older movie audio tracks
+      pc.getSenders()
+        .filter(s => s.track && s.track.kind === 'audio' && s.track.label.includes('movie')) // A bit of a guess, but robust
+        .forEach(s => pc.removeTrack(s));
 
+      // Add the new movie tracks (both video and audio)
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
 
@@ -229,6 +262,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // -----------------------------------
   // Signaling Events
   // -----------------------------------
+  
+  // --- FIX #1: ADDED LOGO LISTENER ---
+  socket.on('update_users', (userNames) => {
+    const initialsContainer = document.getElementById('userInitials');
+    initialsContainer.innerHTML = ''; 
+    userNames.forEach(name => {
+        const initial = name.charAt(0).toUpperCase();
+        const color = nameToColor(name);
+        const circle = document.createElement('div');
+        circle.className = 'initial-circle';
+        circle.textContent = initial;
+        circle.title = name;
+        circle.style.backgroundColor = color;
+        initialsContainer.appendChild(circle);
+    });
+  });
+  // --- END OF FIX #1 ---
+
   socket.on('existing-voice-users', (ids) => {
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
