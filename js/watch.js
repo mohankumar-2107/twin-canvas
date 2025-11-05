@@ -3,9 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;
+  let localStream;        // optional mic
   let isBroadcaster = false;
-  // REMOVED 'isSyncing' as it's no longer needed with this logic
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -16,18 +15,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoPlayer = document.getElementById('moviePlayer');
   const fileInput = document.getElementById('fileInput');
   const filePrompt = document.getElementById('filePrompt');
-
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
-
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
   if (!room) { window.location.href = 'index.html'; return; }
 
+  // We join the room, but we do NOT signal for voice yet.
   socket.emit('join_movie_room', { room, userName });
-  socket.emit('ready-for-voice', { room });
   
   function nameToColor(name) {
     let hash = 0;
@@ -38,6 +35,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return `hsl(${hue}, 70%, 60%)`;
   }
 
+  // This function tries to play all blocked mic audio
+  function playAllBlockedAudio() {
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
+    });
+  }
+  
+  // This function tries to open fullscreen
+  function openFullscreen() {
+      const elem = document.documentElement; // Get the whole page
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen();
+      } else if (elem.webkitRequestFullscreen) { /* Safari */
+        elem.webkitRequestFullscreen();
+      } else if (elem.msRequestFullscreen) { /* IE11 */
+        elem.msRequestFullscreen();
+      }
+  }
+
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
@@ -45,9 +61,11 @@ document.addEventListener('DOMContentLoaded', () => {
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
 
+    // Add mic stream ONLY if it's already enabled
     if (localStream) {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
+    // Add movie stream ONLY if this user is the broadcaster
     if (isBroadcaster && movieStream) {
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
@@ -65,31 +83,42 @@ document.addEventListener('DOMContentLoaded', () => {
         videoPlayer.muted = false;
 
         videoPlayer.play().catch(() => {
+          // --- "TAP TO ENABLE" BUTTON RESTORED ---
           const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound";
+          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
           btn.style = `
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            position: fixed; bottom: 20px; right: 20px; /* Positioned to the right */
             background: #7c5cff; color: white; border: none;
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
+            z-index: 100;
           `;
           document.body.appendChild(btn);
-          btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
+          btn.onclick = () => { 
+              videoPlayer.play().then(() => btn.remove());
+              openFullscreen(); // Trigger fullscreen
+              playAllBlockedAudio(); // Try to play mic audio
+          };
         });
 
-        // We no longer disable buttons for User 2
+        // Controls are enabled for everyone
+        playPauseBtn.disabled = false;
+        skipBtn.disabled = false;
+        reverseBtn.disabled = false;
       }
 
       if (event.track.kind === "audio") {
+        // This is a mic-only stream
         if (stream.getVideoTracks().length === 0) {
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              audio.autoplay = true;
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
+            // Don't try to play here, wait for user click
+            console.warn(`Mic audio for ${socketId} received. Waiting for interaction to play.`);
         }
       }
     };
@@ -120,99 +149,94 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
+    // This click unblocks audio
+    playAllBlockedAudio();
+
     movieStream = videoPlayer.captureStream(); 
 
     for (const id of Object.keys(peerConnections)) {
       const pc = getOrCreatePC(id);
+      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
       pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      pc.getSenders().filter(s => s.track && s.track.kind === 'audio' && s.track !== localStream?.getAudioTracks()[0]).forEach(s => pc.removeTrack(s));
+      pc.getSenders().filter(s => {
+          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
+      }).forEach(s => pc.removeTrack(s));
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
     await renegotiateAll();
   });
 
-  // -----------------------------------
-  // Playback sync - FINAL FIX
-  // -----------------------------------
-
-  // ONLY button clicks send events.
-  // This works for User 1 AND User 2.
+  // --- Playback sync (Optimistic UI) ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
+        videoPlayer.play();
         socket.emit('video_play', { room });
     } else {
+        videoPlayer.pause();
         socket.emit('video_pause', { room });
     }
   });
-
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    // We only emit the event. The server will tell everyone (including us)
-    // to seek, which guarantees perfect sync.
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
-
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
-  // These listeners ONLY update the button icon. They do not send events.
-  // This breaks the feedback loop.
   videoPlayer.addEventListener('play', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
-
   videoPlayer.addEventListener('pause', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
-  // Socket listeners are the ONLY thing that changes the player state.
   socket.on('video_play', () => {
-    videoPlayer.play().catch(()=>{});
-    // The 'play' event above will handle the icon change.
+    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
   });
-
   socket.on('video_pause', () => {
-    videoPlayer.pause();
-    // The 'pause' event above will handle the icon change.
+    if (!videoPlayer.paused) videoPlayer.pause();
   });
-
   socket.on('video_seek', (time) => {
-    videoPlayer.currentTime = time;
+    if (Math.abs(videoPlayer.currentTime - time) > 1) {
+        videoPlayer.currentTime = time;
+    }
   });
 
-  // -----------------------------------
-  // Mic button
-  // -----------------------------------
+  // --- MIC LOGIC (like drawing room) ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
     const icon = micBtn.querySelector('i');
+
     if (micOn && !localStream) {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
-        for (const id of Object.keys(peerConnections)) {
-          const pc = getOrCreatePC(id);
-          localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
-        }
-        await renegotiateAll();
+        
+        // This is the drawing room logic: signal readiness *after* getting mic
+        socket.emit('ready-for-voice', { room });
+        
+        // This click unblocks audio
+        playAllBlockedAudio();
+
       } catch (e) {
         console.error("Mic blocked:", e);
         micOn = false;
       }
     }
+
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = micOn);
     }
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // -----------------------------------
-  // Signaling Events
-  // -----------------------------------
+  // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
@@ -228,15 +252,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // This is the drawing room logic, it's more robust
   socket.on('existing-voice-users', (ids) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
+  
   socket.on('voice-offer', async ({ from, offer }) => {
+    if (!localStream) return; // Don't answer if mic isn't ready
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
