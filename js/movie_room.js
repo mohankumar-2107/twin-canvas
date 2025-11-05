@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const userName = localStorage.getItem('twinCanvasUserName');
 
     if (userName) {
-        welcomeMessageElement.textContent = `Welcome ${userName}! Ready for a movie night? ✨`;
+        welcomeMessageElement.textContent = `Welcome ${userName}! Ready for a Movie Night? ✨`;
     } else {
         // If no name, send back to name page
         window.location.href = 'name.html';
