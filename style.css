@@ -612,4 +612,18 @@ body.movie-theme {
 .video-controls button:hover {
     transform: scale(1.15);
 }
+.soundUnlock {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #7c5cff;
+  color: white;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 15px;
+}
+
 
