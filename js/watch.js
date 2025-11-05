@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;
+  let localStream;        // optional mic
   let isBroadcaster = false;
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -15,11 +15,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoPlayer = document.getElementById('moviePlayer');
   const fileInput = document.getElementById('fileInput');
   const filePrompt = document.getElementById('filePrompt');
-
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
-
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
@@ -75,7 +73,6 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
-        // We enable controls for everyone
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
@@ -87,11 +84,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              audio.autoplay = true; // This will be blocked by the browser
+              // audio.autoplay = true; // This will be blocked
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
+            
+            // --- FIX #1: TRY TO PLAY THE MIC AUDIO ---
+            // It will fail if the user hasn't clicked, but will
+            // succeed if they have (e.g., by clicking their own mic).
+            audio.play().catch(e => {
+                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
+            });
+            // --- END OF FIX #1 ---
         }
       }
     };
@@ -126,47 +131,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
     for (const id of Object.keys(peerConnections)) {
       const pc = getOrCreatePC(id);
+      
+      // --- FIX #2: SAFER WAY TO PROTECT MIC STREAM ---
+      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+      
+      // Remove all old video tracks
       pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      pc.getSenders().filter(s => s.track && s.track.kind === 'audio' && s.track !== localStream?.getAudioTracks()[0]).forEach(s => pc.removeTrack(s));
+      
+      // Remove old audio tracks THAT ARE NOT the mic
+      pc.getSenders().filter(s => {
+          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
+      }).forEach(s => pc.removeTrack(s));
+      
+      // Add the new movie tracks (video + audio)
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+      // --- END OF FIX #2 ---
     }
     await renegotiateAll();
   });
 
-  // -----------------------------------
-  // Playback sync - LAG FIX (Optimistic UI)
-  // -----------------------------------
+  // --- Playback sync (Optimistic UI) ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
-        videoPlayer.play(); // Play locally first
-        socket.emit('video_play', { room }); // Then tell others
+        videoPlayer.play();
+        socket.emit('video_play', { room });
     } else {
-        videoPlayer.pause(); // Pause locally first
-        socket.emit('video_pause', { room }); // Then tell others
+        videoPlayer.pause();
+        socket.emit('video_pause', { room });
     }
   });
 
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    videoPlayer.currentTime = newTime; // Seek locally first
-    socket.emit('video_seek', { room, time: newTime }); // Then tell others
+    videoPlayer.currentTime = newTime;
+    socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
-    videoPlayer.currentTime = newTime; // Seek locally first
-    socket.emit('video_seek', { room, time: newTime }); // Then tell others
+    videoPlayer.currentTime = newTime;
+    socket.emit('video_seek', { room, time: newTime });
   });
 
-  // These listeners just update the icon
   videoPlayer.addEventListener('play', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
+
   videoPlayer.addEventListener('pause', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
-  // Socket listeners ONLY update the player if it's out of sync
   socket.on('video_play', () => {
     if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
   });
@@ -174,16 +188,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!videoPlayer.paused) videoPlayer.pause();
   });
   socket.on('video_seek', (time) => {
-    // We add a small buffer to prevent fighting over the exact millisecond
     if (Math.abs(videoPlayer.currentTime - time) > 1) {
         videoPlayer.currentTime = time;
     }
   });
-  // --- END OF LAG FIX ---
 
-  // -----------------------------------
-  // Mic button - AUDIO FIX
-  // -----------------------------------
+  // --- Mic button ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -201,12 +211,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         await renegotiateAll();
 
-        // --- NEW AUDIO FIX ---
-        // After getting user permission, try to play all waiting mic audio
+        // --- FIX #1 (Part B): Force-play all waiting mic audio ---
+        // This click counts as user interaction, unblocking audio
         audioContainer.querySelectorAll('audio').forEach(audio => {
             audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
         });
-        // --- END OF FIX ---
 
       } catch (e) {
         console.error("Mic blocked:", e);
@@ -220,9 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // -----------------------------------
-  // Signaling Events
-  // -----------------------------------
+  // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
@@ -237,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
         initialsContainer.appendChild(circle);
     });
   });
+
   socket.on('existing-voice-users', (ids) => {
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
