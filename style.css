@@ -661,5 +661,88 @@ body.movie-theme {
     background: var(--primary-color);
     border-radius: 50%;
 }
+/* --- Add this to the end of style.css --- */
 
+/* 1. Make the night sky a darker, moving gradient */
+body.movie-theme {
+    background: linear-gradient(245deg, #00001a, #0a001f, #000);
+    background-size: 200% 200%;
+    color: #eee;
+    overflow: hidden; /* Prevents scrollbars from animations */
+    animation: moveSky 30s ease infinite;
+}
+
+@keyframes moveSky {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* 2. The wrapper for our animations (behind the content) */
+.night-sky-animations {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+}
+
+/* 3. The "Shooting Stars" */
+.shooting-star {
+    position: absolute;
+    top: -50px; /* Start off-screen */
+    left: 50%;
+    width: 120px;
+    height: 2px;
+    background: linear-gradient(to right, white, rgba(255, 255, 255, 0));
+    border-radius: 50%;
+    opacity: 0;
+    transform: rotate(-35deg);
+    animation: shoot 5s linear infinite;
+}
+
+/* Make each star different */
+.shooting-star:nth-child(2) {
+    top: 20%;
+    left: -100px;
+    animation-delay: 1.2s;
+    animation-duration: 4s;
+}
+
+.shooting-star:nth-child(3) {
+    top: 0;
+    left: 70%;
+    animation-delay: 3.5s;
+    animation-duration: 4.5s;
+    transform: rotate(-45deg);
+}
+
+@keyframes shoot {
+    0% {
+        opacity: 1;
+        transform: translateX(-10vw) translateY(0) rotate(-35deg);
+    }
+    100% {
+        opacity: 0;
+        transform: translateX(110vw) translateY(60vh) rotate(-35deg);
+    }
+}
+
+/* 4. (Optional) Subtle twinkling starfield */
+.night-sky-animations::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background-image: radial-gradient(circle, white 1px, transparent 1px);
+    background-size: 70px 70px; /* Adjust size for star density */
+    opacity: 0.3;
+    animation: twinkle 20s linear infinite;
+}
+
+@keyframes twinkle {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
