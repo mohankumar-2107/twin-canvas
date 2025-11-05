@@ -1,277 +1,299 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const socket = io('https://twin-canvas.onrender.com'); // Your Render URL
 
-    function nameToColor(name) {
-        let hash = 0;
-        for (let i = 0; i < name.length; i++) {
-            hash = name.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        const hue = hash % 360;
-        return `hsl(${hue}, 70%, 60%)`;
+  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
+
+  let movieStream;
+  let localStream;                // mic (optional)
+  let isBroadcaster = false;
+  const peerConnections = {};     // socketId -> RTCPeerConnection
+
+  const configuration = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  };
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const room = urlParams.get('room');
+  const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
+
+  const videoPlayer = document.getElementById('moviePlayer');
+  const fileInput   = document.getElementById('fileInput');
+  const filePrompt  = document.getElementById('filePrompt');
+
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  const skipBtn      = document.getElementById('skipBtn');
+  const reverseBtn   = document.getElementById('reverseBtn');
+
+  const micBtn        = document.getElementById('micBtn');
+  const audioContainer= document.getElementById('audio-container');
+  const initialsContainer = document.getElementById('userInitials');
+
+  if (!room) { window.location.href = 'index.html'; return; }
+
+  // ✅ Join movie room
+  socket.emit('join_movie_room', { room, userName });
+
+  // ✅ Immediately request peer list (ensures User-2 sees video even without mic)
+  socket.emit("request-peers", { room });
+
+  function nameToColor(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++)
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = ((hash % 360) + 360) % 360;
+    return `hsl(${hue}, 70%, 60%)`;
+  }
+
+  function playAllBlockedAudio() {
+    audioContainer.querySelectorAll('audio').forEach(a => {
+      a.play().catch(()=>{});
+    });
+  }
+
+  // ----------------------------------------------------
+  // CREATE / GET PEER CONNECTION
+  // ----------------------------------------------------
+  function getOrCreatePC(socketId) {
+    let pc = peerConnections[socketId];
+    if (pc) return pc;
+
+    pc = new RTCPeerConnection(configuration);
+    peerConnections[socketId] = pc;
+
+    // attach mic tracks
+    if (localStream) {
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    }
+    // attach movie tracks
+    if (isBroadcaster && movieStream) {
+      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
 
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+    pc.onicecandidate = (e) => {
+      if (e.candidate)
+        socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
+    };
 
-    let isDrawing = false;
-    let lastX = 0;
-    let lastY = 0;
-    let currentTool = 'pen';
-    let history = [];
-    let direction = true;
+    pc.ontrack = ({ streams }) => {
+      const stream = streams[0];
 
-    const colorPicker = document.getElementById('colorPicker');
-    const strokeWidthSlider = document.getElementById('strokeWidth');
-    const toolButtons = document.querySelectorAll('.tool');
-    const clearBtn = document.getElementById('clearBtn');
-    const saveBtn = document.getElementById('saveBtn');
-    const undoBtn = document.getElementById('undoBtn');
+      // ✅ MOVIE STREAM (video + movie audio)
+      if (stream.getVideoTracks().length > 0) {
+        filePrompt.style.display = 'none';
+        videoPlayer.srcObject = stream;
+        videoPlayer.muted = false;
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const room = urlParams.get('room');
-    const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
-
-    if (!room) { window.location.href = 'index.html'; return; }
-
-    // Use the correct 'join_room' event
-    socket.emit('join_room', { room, userName });
-
-    // --- Voice Chat & WebRTC Logic ---
-    const micBtn = document.getElementById('micBtn');
-    const audioContainer = document.getElementById('audio-container');
-    let localStream;
-    let peerConnections = {};
-    let isMuted = true;
-    const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-    function playAllBlockedAudio() {
-        audioContainer.querySelectorAll('audio').forEach(audio => {
-            audio.play().catch(e => console.warn("Audio play blocked", e));
+        videoPlayer.play().catch(() => {
+          const btn = document.createElement("button");
+          btn.textContent = "🔊 Tap to enable sound";
+          btn.style = `
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #7c5cff; color: white; border: none;
+            padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
+          `;
+          document.body.appendChild(btn);
+          btn.onclick = () => {
+            videoPlayer.play().then(() => btn.remove());
+            playAllBlockedAudio();
+          };
         });
-    }
 
-    micBtn.addEventListener('click', async () => {
-        isMuted = !isMuted;
-        const icon = micBtn.querySelector('i');
+        playPauseBtn.disabled = false;
+        skipBtn.disabled      = false;
+        reverseBtn.disabled   = false;
+      }
 
-        if (!isMuted && !localStream) {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true } 
-                });
-                
-                // This is the correct logic: signal readiness *after* getting mic
-                socket.emit('ready-for-voice', { room });
-                
-                // This click unblocks audio
-                playAllBlockedAudio();
-
-            } catch (e) {
-                console.error("Mic blocked:", e);
-                isMuted = true; // Revert state on error
-            }
+      // ✅ MIC AUDIO STREAM (no echo)
+      if (stream.getVideoTracks().length === 0) {
+        let audio = document.getElementById(`audio-${socketId}`);
+        if (!audio) {
+          audio = document.createElement("audio");
+          audio.id = `audio-${socketId}`;
+          audio.controls = false;
+          audio.autoplay = true;
+          audioContainer.appendChild(audio);
         }
+        audio.srcObject = stream;
 
-        if (localStream) {
-            localStream.getTracks().forEach(t => t.enabled = !isMuted);
+        // ✅ Prevent echo: mute our own mic playback
+        if (socketId === socket.id) {
+          audio.muted = true;
+          audio.volume = 0;
         }
-        icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
-    });
-    // --- End of Voice Chat Logic ---
+      }
+    };
 
-    function draw(x, y, lastX, lastY, color, width, tool) {
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
-        ctx.globalCompositeOperation = (tool === 'eraser') ? 'destination-out' : 'source-over';
-        if (tool === 'brush') {
-            ctx.globalAlpha = 0.3;
-            if (ctx.lineWidth > 40 || ctx.lineWidth < 10) { direction = !direction; }
-            ctx.lineWidth += (direction ? 0.5 : -0.5);
-        } else {
-            ctx.globalAlpha = 1.0;
-        }
-        ctx.moveTo(lastX, lastY);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+    return pc;
+  }
+
+  async function sendOffer(to) {
+    const pc = getOrCreatePC(to);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('voice-offer', { room, to, offer: pc.localDescription });
+  }
+
+  async function renegotiateAll() {
+    for (const id of Object.keys(peerConnections)) {
+      await sendOffer(id);
     }
+  }
 
-    function handleStart(e) {
-        isDrawing = true;
-        const { x, y } = getCoordinates(e);
-        [lastX, lastY] = [x, y];
-        saveState();
+  // ----------------------------------------------------
+  // MOVIE FILE SELECTED (HOST ONLY)
+  // ----------------------------------------------------
+  fileInput.addEventListener('change', async () => {
+    isBroadcaster = true;
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    videoPlayer.src = URL.createObjectURL(file);
+    videoPlayer.muted = true; // host avoids echo
+    await videoPlayer.play().catch(()=>{});
+    filePrompt.style.display = 'none';
+
+    playAllBlockedAudio();
+
+    movieStream = videoPlayer.captureStream();
+
+    for (const id of Object.keys(peerConnections)) {
+      const pc = getOrCreatePC(id);
+      const localMicTrack = localStream ? localStream.getAudioTracks()[0] : null;
+
+      pc.getSenders()
+        .filter(s => s.track && s.track.kind === 'video')
+        .forEach(s => pc.removeTrack(s));
+
+      pc.getSenders()
+        .filter(s => s.track && s.track.kind === 'audio' && s.track !== localMicTrack)
+        .forEach(s => pc.removeTrack(s));
+
+      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
+    await renegotiateAll();
+  });
 
-    function handleMove(e) {
-        if (!isDrawing) return;
-        const { x, y } = getCoordinates(e);
-        const drawData = {
-            room, x, y, lastX, lastY,
-            color: colorPicker.value,
-            width: strokeWidthSlider.value,
-            tool: currentTool
-        };
-        draw(x, y, lastX, lastY, drawData.color, drawData.width, drawData.tool);
-        socket.emit('draw', drawData);
-        [lastX, lastY] = [x, y];
+  // ----------------------------------------------------
+  // VIDEO CONTROLS SYNC
+  // ----------------------------------------------------
+  playPauseBtn.addEventListener('click', () => {
+    if (videoPlayer.paused) {
+      videoPlayer.play();
+      socket.emit('video_play', { room });
+    } else {
+      videoPlayer.pause();
+      socket.emit('video_pause', { room });
     }
+  });
+  skipBtn.addEventListener('click', () => {
+    const t = videoPlayer.currentTime + 10;
+    videoPlayer.currentTime = t;
+    socket.emit('video_seek', { room, time: t });
+  });
+  reverseBtn.addEventListener('click', () => {
+    const t = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = t;
+    socket.emit('video_seek', { room, time: t });
+  });
 
-    function handleEnd() { isDrawing = false; ctx.beginPath(); }
+  socket.on('video_play', () => videoPlayer.play().catch(()=>{}));
+  socket.on('video_pause', () => videoPlayer.pause());
+  socket.on('video_seek', (t) => {
+    if (Math.abs(videoPlayer.currentTime - t) > 1)
+      videoPlayer.currentTime = t;
+  });
 
-    function getCoordinates(e) {
-        if (e.touches && e.touches.length > 0) {
-            return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        }
-        return { x: e.clientX, y: e.clientY };
-    }
-    
-    canvas.addEventListener('mousedown', handleStart);
-    canvas.addEventListener('mousemove', handleMove);
-    canvas.addEventListener('mouseup', handleEnd);
-    canvas.addEventListener('mouseleave', handleEnd);
-    canvas.addEventListener('touchstart', handleStart);
-    canvas.addEventListener('touchmove', handleMove);
-    canvas.addEventListener('touchend', handleEnd);
+  // ----------------------------------------------------
+  // MIC BUTTON
+  // ----------------------------------------------------
+  let micOn = false;
+  micBtn.addEventListener('click', async () => {
+    micOn = !micOn;
+    const icon = micBtn.querySelector('i');
 
-    toolButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            document.querySelector('.tool.active')?.classList.remove('active');
-            button.classList.add('active');
-            currentTool = button.dataset.tool;
+    if (micOn && !localStream) {
+      try {
+        // ✅ ECHO REMOVED (noise + cancellation)
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
         });
-    });
 
-    clearBtn.addEventListener('click', () => { saveState(); ctx.clearRect(0, 0, canvas.width, canvas.height); socket.emit('clear', { room }); });
-    saveBtn.addEventListener('click', () => {
-        const dataURL = canvas.toDataURL('image/png');
-        const link = document.createElement('a');
-        link.href = dataURL;
-        link.download = `TwinCanvas_${room}.png`;
-        link.click();
-    });
-    function saveState() { if (history.length > 20) history.shift(); history.push(canvas.toDataURL()); }
-    function undoLast() {
-        if (history.length > 0) {
-            const lastState = history.pop();
-            const img = new Image();
-            img.src = lastState;
-            img.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0); };
-            socket.emit('undo', { room, state: lastState });
-        }
-    }
-    undoBtn.addEventListener('click', undoLast);
-    
-    window.addEventListener('resize', () => {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        ctx.putImageData(imageData, 0, 0);
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-    });
+        // let others know we can join voice
+        socket.emit('ready-for-voice', { room });
+        playAllBlockedAudio();
 
-    // --- SOCKET.IO LISTENERS ---
-    
-    socket.on('update_users', (userNames) => {
-        const initialsContainer = document.getElementById('userInitials');
-        initialsContainer.innerHTML = ''; 
-        userNames.forEach(name => {
-            const initial = name.charAt(0).toUpperCase();
-            const color = nameToColor(name);
-            const circle = document.createElement('div');
-            circle.className = 'initial-circle';
-            circle.textContent = initial;
-            circle.title = name;
-            circle.style.backgroundColor = color;
-            initialsContainer.appendChild(circle);
-        });
-    });
-
-    socket.on('draw', (data) => { draw(data.x, data.y, data.lastX, data.lastY, data.color, data.width, data.tool); });
-    socket.on('clear', () => { ctx.clearRect(0, 0, canvas.width, canvas.height); });
-    socket.on('undo', (data) => {
-        const img = new Image();
-        img.src = data.state;
-        img.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0); };
-    });
-    
-    // --- WebRTC Socket Listeners ---
-    function getOrCreatePC(socketId) {
-        let pc = peerConnections[socketId];
-        if (pc) return pc;
-
-        pc = new RTCPeerConnection(configuration);
-        peerConnections[socketId] = pc;
-
-        if (localStream) {
-            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-        }
-
-        pc.onicecandidate = (e) => {
-            if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
-        };
-
-        pc.ontrack = (event) => {
-            const stream = event.streams[0];
-            if (event.track.kind === "audio") {
-                if (stream.getVideoTracks().length === 0) {
-                    let audio = document.getElementById(`audio-${socketId}`);
-                    if (!audio) {
-                        audio = document.createElement("audio");
-                        audio.id = `audio-${socketId}`;
-                        audio.controls = false;
-                        audioContainer.appendChild(audio);
-                    }
-                    audio.srcObject = stream;
-                    audio.play().catch(e => console.warn(`Mic audio for ${socketId} blocked.`));
-                }
-            }
-        };
-        return pc;
-    }
-    
-    socket.on('existing-voice-users', (ids) => {
-        if (!localStream) return;
-        ids.forEach(id => {
-          if (id !== socket.id) sendOffer(id);
-        });
-    });
-    socket.on('user-joined-voice', ({ socketId }) => {
-        if (!localStream) return;
-        if (socketId !== socket.id) sendOffer(socketId);
-    });
-    
-    async function sendOffer(to) {
-        const pc = getOrCreatePC(to);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('voice-offer', { room, to, offer: pc.localDescription });
+      } catch (e) {
+        console.error("Mic blocked:", e);
+        micOn = false;
+      }
     }
 
-    socket.on('voice-offer', async ({ from, offer }) => {
-        if (!localStream) return;
-        const pc = getOrCreatePC(from);
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.enabled = micOn);
+    }
+    icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+  });
+
+  // ----------------------------------------------------
+  // USER ICONS
+  // ----------------------------------------------------
+  socket.on('update_users', (names) => {
+    initialsContainer.innerHTML = '';
+    names.forEach(name => {
+      const div = document.createElement('div');
+      div.className = 'initial-circle';
+      div.textContent = name.charAt(0).toUpperCase();
+      div.style.backgroundColor = nameToColor(name);
+      div.title = name;
+      initialsContainer.appendChild(div);
     });
-    socket.on('voice-answer', async ({ from, answer }) => {
-        const pc = getOrCreatePC(from);
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  });
+
+  // ✅ NEW: ensures User-2 sees movie even if mic off
+  socket.on("peer-list", (ids) => {
+    ids.forEach(id => {
+      if (id !== socket.id) sendOffer(id);
     });
-    socket.on('ice-candidate', async ({ from, candidate }) => {
-        const pc = getOrCreatePC(from);
-        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+  });
+
+  // ----------------------------------------------------
+  // SIGNALING (VOICE CHAT)
+  // ----------------------------------------------------
+  socket.on('existing-voice-users', (ids) => {
+    ids.forEach(id => {
+      if (id !== socket.id) sendOffer(id);
     });
-    socket.on('user-left-voice', (socketId) => {
-        peerConnections[socketId]?.close();
-        delete peerConnections[socketId];
-        document.getElementById(`audio-${socketId}`)?.remove();
-    });
+  });
+
+  socket.on('user-joined-voice', ({ socketId }) => {
+    if (socketId !== socket.id) sendOffer(socketId);
+  });
+
+  socket.on('voice-offer', async ({ from, offer }) => {
+    const pc = getOrCreatePC(from);
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const ans = await pc.createAnswer();
+    await pc.setLocalDescription(ans);
+    socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
+  });
+
+  socket.on('voice-answer', async ({ from, answer }) => {
+    const pc = getOrCreatePC(from);
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  });
+
+  socket.on('ice-candidate', async ({ from, candidate }) => {
+    const pc = getOrCreatePC(from);
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch{}
+  });
+
+  socket.on('user-left-voice', (id) => {
+    peerConnections[id]?.close();
+    delete peerConnections[id];
+    document.getElementById(`audio-${id}`)?.remove();
+  });
+
 });
