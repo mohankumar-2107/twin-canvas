@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.track.kind === 'video') {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream; 
-        videoPlayer.muted = false; // Unmute for User 2
+        videoPlayer.muted = false;
 
         videoPlayer.play().catch(() => {
           const btn = document.createElement("button");
@@ -77,6 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
+        // This disables the buttons for the receiver
         playPauseBtn.disabled = true;
         skipBtn.disabled = true;
         reverseBtn.disabled = true;
@@ -119,9 +120,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!file) return;
 
     videoPlayer.src = URL.createObjectURL(file);
-    
-    // --- THIS IS FIX #1 ---
-    // Unmute the video for the broadcaster (User 1)
     videoPlayer.muted = false; 
     
     await videoPlayer.play().catch(() => {});
@@ -138,15 +136,58 @@ document.addEventListener('DOMContentLoaded', () => {
     await renegotiateAll();
   });
 
-  playPauseBtn.addEventListener('click', () => { /* ... (same as before) ... */ });
-  skipBtn.addEventListener('click', () => { /* ... (same as before) ... */ });
-  reverseBtn.addEventListener('click', () => { /* ... (same as before) ... */ });
-  videoPlayer.addEventListener('play', () => { /* ... (same as before) ... */ });
-  videoPlayer.addEventListener('pause', () => { /* ... (same as before) ... */ });
-  socket.on('video_play', () => { /* ... (same as before) ... */ });
-  socket.on('video_pause', () => { /* ... (same as before) ... */ });
-  socket.on('video_seek', (time) => { /* ... (same as before) ... */ });
+  // -----------------------------------
+  // Playback sync (host controls) - FIXED
+  // -----------------------------------
+  playPauseBtn.addEventListener('click', () => {
+    if (videoPlayer.paused) videoPlayer.play();
+    else videoPlayer.pause();
+  });
 
+  skipBtn.addEventListener('click', () => {
+    // if (!isBroadcaster) return; // THIS LINE WAS THE BUG. IT'S NOW REMOVED.
+    videoPlayer.currentTime += 10;
+    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+  });
+
+  reverseBtn.addEventListener('click', () => {
+    // if (!isBroadcaster) return; // THIS LINE WAS THE BUG. IT'S NOW REMOVED.
+    videoPlayer.currentTime -= 10;
+    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+  });
+
+  videoPlayer.addEventListener('play', () => {
+    if (isSyncing) { isSyncing = false; return; }
+    if (isBroadcaster) socket.emit('video_play', { room });
+    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+  });
+
+  videoPlayer.addEventListener('pause', () => {
+    if (isSyncing) { isSyncing = false; return; }
+    if (isBroadcaster) socket.emit('video_pause', { room });
+    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+  });
+
+  socket.on('video_play', () => {
+    isSyncing = true;
+    videoPlayer.play().catch(()=>{});
+    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+  });
+
+  socket.on('video_pause', () => {
+    isSyncing = true;
+    videoPlayer.pause();
+    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+  });
+
+  socket.on('video_seek', (time) => {
+    isSyncing = true;
+    videoPlayer.currentTime = time;
+  });
+
+  // -----------------------------------
+  // Mic button (optional)
+  // -----------------------------------
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -154,8 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (micOn && !localStream) {
       try {
-        // --- THIS IS FIX #2 ---
-        // Ask for the mic with echo cancellation enabled
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
@@ -177,7 +216,9 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // --- Signaling Events ---
+  // -----------------------------------
+  // Signaling Events
+  // -----------------------------------
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
