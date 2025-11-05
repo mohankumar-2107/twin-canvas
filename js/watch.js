@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
+  const socket = io('https.://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
   let localStream;        // optional mic
@@ -60,11 +60,9 @@ document.addEventListener('DOMContentLoaded', () => {
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
 
-    // Add mic stream (if it exists)
     if (localStream) {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
-    // Add movie stream (if it exists)
     if (isBroadcaster && movieStream) {
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
@@ -77,13 +75,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const stream = event.streams[0];
       
       if (event.track.kind === 'video') {
-        // This is the movie's video track.
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream; 
         videoPlayer.muted = false;
 
         videoPlayer.play().catch(() => {
-          // Show the "Tap to enable sound" button
           const btn = document.createElement("button");
           btn.textContent = "🔊 Tap to enable sound & go fullscreen";
           btn.style = `
@@ -96,19 +92,17 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.onclick = () => { 
               videoPlayer.play().then(() => btn.remove());
               openFullscreen();
-              playAllBlockedAudio(); // Try to play mic audio
+              playAllBlockedAudio();
           };
         });
 
-        // Enable controls for the receiver
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
       }
 
       if (event.track.kind === "audio") {
-        // This is a mic-only stream
-        if (stream.getVideoTracks().length === 0) {
+        if (stream.getVideoTracks().length === 0) { // Mic-only stream
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
@@ -144,18 +138,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!file) return;
 
     videoPlayer.src = URL.createObjectURL(file);
-    videoPlayer.muted = false; // Unmute for broadcaster
+    
+    // --- FIX #1: Broadcaster MUST be muted to prevent echo ---
+    videoPlayer.muted = true; 
     
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
-    // This click unblocks any waiting mic audio
     playAllBlockedAudio();
 
-    // Get the movie stream (video + audio)
     movieStream = videoPlayer.captureStream(); 
-
-    // Now that we have a movie, renegotiate with all existing peers
     await renegotiateAll();
   });
 
@@ -186,7 +178,6 @@ document.addEventListener('DOMContentLoaded', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
   socket.on('video_seek', (time) => {
-    // We add a small buffer to prevent fighting over the exact millisecond
     if (Math.abs(videoPlayer.currentTime - time) > 1) {
         videoPlayer.currentTime = time;
     }
@@ -250,14 +241,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (socketId !== socket.id) sendOffer(socketId);
   });
   
+  // --- FIX #2: REMOVED the broken check ---
+  // The receiver MUST always answer, even if their mic isn't ready.
   socket.on('voice-offer', async ({ from, offer }) => {
-    // We MUST answer, even if our mic isn't ready
+    // if (!localStream) return; // <-- THIS WAS THE BUG. IT IS GONE.
+    
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
   });
+  // --- END OF FIX #2 ---
+
   socket.on('voice-answer', async ({ from, answer }) => {
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
