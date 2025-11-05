@@ -11,8 +11,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const userName = localStorage.getItem('twinCanvasUserName');
 
     if (userName) {
-        welcomeMessageElement.textContent = `Welcome ${userName}! Hope you have a fine day and enjoy here!! ✨✨`;
+        welcomeMessageElement.textContent = `Welcome ${userName}! Ready for a movie night? ✨`;
     } else {
+        // If no name, send back to name page
         window.location.href = 'name.html';
         return;
     }
@@ -38,8 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
         roomCodeText.textContent = roomCode;
         modal.classList.remove('hidden');
 
+        // This redirects to the watch page (as intended)
         setTimeout(() => {
-            // This is the only change: it goes to watch.html
             window.location.href = `watch.html?room=${roomCode}`;
         }, 2500); 
     });
@@ -47,13 +48,14 @@ document.addEventListener('DOMContentLoaded', () => {
     joinRoomBtn.addEventListener('click', () => {
         const roomCode = roomCodeInput.value.trim();
         if (roomCode.length === 4 && !isNaN(roomCode)) {
-            // This is the only change: it goes to watch.html
+            // This redirects to the watch page (as intended)
             window.location.href = `watch.html?room=${roomCode}`;
         } else {
             alert('Please enter a valid 4-digit room code.');
         }
     });
 
+    // Logic for copying the room code
     copyCodeBtn.addEventListener('click', () => {
         navigator.clipboard.writeText(roomCodeText.textContent).then(() => {
             copyCodeBtn.textContent = 'Copied!';
@@ -63,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Logic for closing the modal by clicking outside
     modal.addEventListener('click', (e) => {
         if (e.target === modal) {
             modal.classList.add('hidden');
