@@ -1,14 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https://twin-canvas.onrender.com'); // Your Render server URL
+  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;        // Mic stream
+  let localStream;        // optional mic
   let isBroadcaster = false;
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-  // --- Get Page Elements ---
   const urlParams = new URLSearchParams(window.location.search);
   const room = urlParams.get('room');
   const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
@@ -25,10 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!room) { window.location.href = 'index.html'; return; }
 
-  // Join the movie room
+  // Join the room
   socket.emit('join_movie_room', { room, userName });
   
-  // --- Helper Functions ---
   function nameToColor(name) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
@@ -40,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   function playAllBlockedAudio() {
     audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
+        audio.play().catch(e => console.warn("Audio play blocked", e));
     });
   }
   
@@ -55,7 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   }
 
-  // --- WebRTC Core Logic ---
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
@@ -63,11 +60,11 @@ document.addEventListener('DOMContentLoaded', () => {
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
 
-    // Add local mic stream (if it exists)
+    // Add mic stream (if it exists)
     if (localStream) {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
-    // Add local movie stream (if it exists)
+    // Add movie stream (if it exists)
     if (isBroadcaster && movieStream) {
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
@@ -195,7 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- MIC LOGIC (Identical to drawing room) ---
+  // --- MIC LOGIC (Copied from drawing room) ---
   micBtn.addEventListener('click', async () => {
     isMuted = !isMuted; 
     const icon = micBtn.querySelector('i');
@@ -221,9 +218,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = !isMuted);
     }
-    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa.microphone';
+    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
   });
   // --- END OF MIC LOGIC ---
+
 
   // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
