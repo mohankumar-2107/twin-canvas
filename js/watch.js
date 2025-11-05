@@ -5,7 +5,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let movieStream;
   let localStream;
   let isBroadcaster = false;
-  // REMOVED 'isSyncing' as it's no longer needed with this logic
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -76,16 +75,19 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
         });
 
-        // We no longer disable buttons for User 2
+        // We enable controls for everyone
+        playPauseBtn.disabled = false;
+        skipBtn.disabled = false;
+        reverseBtn.disabled = false;
       }
 
       if (event.track.kind === "audio") {
-        if (stream.getVideoTracks().length === 0) {
+        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              audio.autoplay = true;
+              audio.autoplay = true; // This will be blocked by the browser
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
@@ -132,78 +134,86 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -----------------------------------
-  // Playback sync - FINAL FIX
+  // Playback sync - LAG FIX (Optimistic UI)
   // -----------------------------------
-
-  // ONLY button clicks send events.
-  // This works for User 1 AND User 2.
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
-        socket.emit('video_play', { room });
+        videoPlayer.play(); // Play locally first
+        socket.emit('video_play', { room }); // Then tell others
     } else {
-        socket.emit('video_pause', { room });
+        videoPlayer.pause(); // Pause locally first
+        socket.emit('video_pause', { room }); // Then tell others
     }
   });
 
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    // We only emit the event. The server will tell everyone (including us)
-    // to seek, which guarantees perfect sync.
-    socket.emit('video_seek', { room, time: newTime });
+    videoPlayer.currentTime = newTime; // Seek locally first
+    socket.emit('video_seek', { room, time: newTime }); // Then tell others
   });
 
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
-    socket.emit('video_seek', { room, time: newTime });
+    videoPlayer.currentTime = newTime; // Seek locally first
+    socket.emit('video_seek', { room, time: newTime }); // Then tell others
   });
 
-  // These listeners ONLY update the button icon. They do not send events.
-  // This breaks the feedback loop.
+  // These listeners just update the icon
   videoPlayer.addEventListener('play', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
-
   videoPlayer.addEventListener('pause', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
-  // Socket listeners are the ONLY thing that changes the player state.
+  // Socket listeners ONLY update the player if it's out of sync
   socket.on('video_play', () => {
-    videoPlayer.play().catch(()=>{});
-    // The 'play' event above will handle the icon change.
+    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
   });
-
   socket.on('video_pause', () => {
-    videoPlayer.pause();
-    // The 'pause' event above will handle the icon change.
+    if (!videoPlayer.paused) videoPlayer.pause();
   });
-
   socket.on('video_seek', (time) => {
-    videoPlayer.currentTime = time;
+    // We add a small buffer to prevent fighting over the exact millisecond
+    if (Math.abs(videoPlayer.currentTime - time) > 1) {
+        videoPlayer.currentTime = time;
+    }
   });
+  // --- END OF LAG FIX ---
 
   // -----------------------------------
-  // Mic button
+  // Mic button - AUDIO FIX
   // -----------------------------------
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
     const icon = micBtn.querySelector('i');
+
     if (micOn && !localStream) {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
+        
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
         await renegotiateAll();
+
+        // --- NEW AUDIO FIX ---
+        // After getting user permission, try to play all waiting mic audio
+        audioContainer.querySelectorAll('audio').forEach(audio => {
+            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
+        });
+        // --- END OF FIX ---
+
       } catch (e) {
         console.error("Mic blocked:", e);
         micOn = false;
       }
     }
+
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = micOn);
     }
@@ -227,7 +237,6 @@ document.addEventListener('DOMContentLoaded', () => {
         initialsContainer.appendChild(circle);
     });
   });
-
   socket.on('existing-voice-users', (ids) => {
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
