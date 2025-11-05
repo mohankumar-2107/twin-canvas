@@ -23,6 +23,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
+  // --- NEW: Timeline Elements ---
+  const videoContainer = document.getElementById('videoContainer');
+  const timelineContainer = document.getElementById('timelineContainer');
+  const timeline = document.getElementById('timeline');
+  const currentTimeElem = document.getElementById('currentTime');
+  const durationElem = document.getElementById('duration');
+  let timelineVisible = false; // Start hidden
+  let timelineTimeout;
+  // --- END of New Elements ---
+
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
@@ -35,6 +45,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const hue = hash % 360;
     return `hsl(${hue}, 70%, 60%)`;
+  }
+
+  // --- THIS IS THE AUDIO "UNBLOCKING" FUNCTION ---
+  function playAllBlockedAudio() {
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
+    });
   }
 
   function getOrCreatePC(socketId) {
@@ -72,7 +89,11 @@ document.addEventListener('DOMContentLoaded', () => {
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
           `;
           document.body.appendChild(btn);
-          btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
+          // This click on the "Tap to enable" button ALSO counts as an interaction
+          btn.onclick = () => { 
+              videoPlayer.play().then(() => btn.remove());
+              playAllBlockedAudio(); // Try to play mic audio too
+          };
         });
 
         playPauseBtn.disabled = false;
@@ -86,14 +107,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              // audio.autoplay = true; // This will be blocked
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
-            audio.play().catch(e => {
-                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
-            });
+            
+            // audio.play().catch(...) <-- REMOVED
         }
       }
     };
@@ -124,13 +143,9 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
-    // --- THIS IS THE FIX ---
-    // This "click" on the file input counts as a user interaction.
-    // We can now safely play any blocked audio streams from our friends.
-    audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
-    });
-    // --- END OF FIX ---
+    // This click on "Choose File" is a user interaction.
+    // Use it to unblock all waiting mic audio streams.
+    playAllBlockedAudio();
 
     movieStream = videoPlayer.captureStream(); 
 
@@ -191,6 +206,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // --- NEW: Timeline & Double-tap Logic ---
+  function formatTime(seconds) {
+      const min = Math.floor(seconds / 60);
+      const sec = Math.floor(seconds % 60);
+      return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+  }
+  videoPlayer.addEventListener('loadedmetadata', () => {
+      timeline.max = videoPlayer.duration;
+      durationElem.textContent = formatTime(videoPlayer.duration);
+  });
+  videoPlayer.addEventListener('timeupdate', () => {
+      if (!timeline.matches(':active')) { // Only update if user is not dragging
+          timeline.value = videoPlayer.currentTime;
+      }
+      currentTimeElem.textContent = formatTime(videoPlayer.currentTime);
+  });
+  timeline.addEventListener('input', () => { // Send event while dragging
+      socket.emit('video_seek', { room, time: timeline.value });
+  });
+  function toggleTimeline() {
+      timelineVisible = !timelineVisible;
+      timelineContainer.style.opacity = timelineVisible ? '1' : '0';
+      if (timelineVisible) {
+          clearTimeout(timelineTimeout);
+          timelineTimeout = setTimeout(() => {
+              timelineContainer.style.opacity = '0';
+              timelineVisible = false;
+          }, 3000); // Hide after 3 seconds
+      }
+  }
+  videoContainer.addEventListener('dblclick', toggleTimeline);
+  // --- END of Timeline Logic ---
+
   // --- Mic button ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
@@ -209,10 +257,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         await renegotiateAll();
 
-        // This click also counts as user interaction
-        audioContainer.querySelectorAll('audio').forEach(audio => {
-            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
-        });
+        // This click counts as user interaction, unblocking audio
+        playAllBlockedAudio();
 
       } catch (e) {
         console.error("Mic blocked:", e);
@@ -250,6 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('user-joined-voice', ({ socketId }) => {
     if (socketId !== socket.id) sendOffer(socketId);
   });
+  
   socket.on('voice-offer', async ({ from, offer }) => {
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
