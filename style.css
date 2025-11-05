@@ -506,4 +506,110 @@ input[type="color"] {
     cursor: default;
     /* The background-color will now be set by JavaScript */
 }
+/* --- Styles for New Choice Page --- */
+.choice-container {
+    flex-direction: column;
+}
+.choice-options {
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+}
+.choice-card {
+    text-decoration: none;
+    color: var(--text-color);
+    width: 300px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.choice-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+}
+.choice-icon {
+    font-size: 3em;
+    margin-bottom: 20px;
+    color: var(--primary-color);
+}
+
+/* --- Styles for Movie Theme --- */
+body.movie-theme {
+    background: #121212; /* Dark background */
+    color: #eee;
+}
+.movie-theme .card,
+.movie-theme .modal-content {
+    background: rgba(40, 40, 40, 0.9);
+    color: #eee;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.movie-theme .welcome-header h2 {
+    color: white;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.movie-theme .btn {
+    /* Fun "cinema" gradient */
+    background: linear-gradient(45deg, #f7b733, #fc4a1a);
+}
+.movie-theme .logout-btn,
+.movie-theme .back-btn {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Styles for Watch Page --- */
+.video-container {
+    width: 100%;
+    height: 100vh;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+#moviePlayer {
+    width: 100%;
+    max-height: 100%;
+}
+.file-prompt {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: #888;
+    z-index: 10;
+}
+.file-prompt i {
+    font-size: 4em;
+    margin-bottom: 20px;
+}
+#fileInput {
+    margin-top: 20px;
+    font-size: 1.1em;
+    color: #ccc;
+}
+.video-controls {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px 20px;
+    border-radius: 50px;
+    display: flex;
+    gap: 20px;
+    z-index: 20;
+}
+.video-controls button {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.5em;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+.video-controls button:hover {
+    transform: scale(1.15);
+}
 
