@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Room - TwinCanvas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="movie-theme">
+    <div id="userInitials" class="user-initials-container"></div>
+    
+    <div class="video-container">
+        <video id="moviePlayer"></video>
+
+        <div id="filePrompt" class="file-prompt">
+            <i class="fas fa-upload"></i>
+            <h3>Choose your movie file</h3>
+            <p>Both users must select the same file from their computer.</p>
+            <input type="file" id="fileInput" accept="video/*">
+        </div>
+
+        <div class="video-controls">
+            <button id="reverseBtn" title="Back 10s"><i class="fas fa-backward"></i></button>
+            <button id="playPauseBtn" title="Play/Pause"><i class="fas fa-play"></i></button>
+            <button id="skipBtn" title="Forward 10s"><i class="fas fa-forward"></i></button>
+            <button id="micBtn" class="tool" title="Toggle Mic"><i class="fas fa-microphone-slash"></i></button>
+        </div>
+    </div>
+    
+    <div id="audio-container"></div> <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script src="/js/watch.js"></script>
+</body>
+</html>
