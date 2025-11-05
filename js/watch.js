@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https.://twin-canvas.onrender.com'); // your signaling server
+  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
   let localStream;        // optional mic
@@ -20,11 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const reverseBtn = document.getElementById('reverseBtn');
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
-  let micOn = false; // Start with mic off
 
   if (!room) { window.location.href = 'index.html'; return; }
 
-  // Join the room immediately
+  // Join the room
   socket.emit('join_movie_room', { room, userName });
   
   function nameToColor(name) {
@@ -60,11 +59,11 @@ document.addEventListener('DOMContentLoaded', () => {
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
 
-    // Add local mic stream
+    // Add mic stream (if it exists)
     if (localStream) {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
-    // Add local movie stream (if broadcaster)
+    // Add movie stream (if it exists)
     if (isBroadcaster && movieStream) {
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
     }
@@ -133,43 +132,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- AUTOMATICALLY GET MIC AND SIGNAL READY ---
-  async function startConnection() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: true } 
-        });
-        
-        // Mute mic by default
-        localStream.getTracks().forEach(t => t.enabled = false);
-        micOn = false;
-        micBtn.querySelector('i').className = 'fas fa-microphone-slash';
-        
-        // NOW we are ready
-        socket.emit('ready-for-voice', { room });
-        
-        // This unblocks any audio that was waiting
-        playAllBlockedAudio();
-
-      } catch (e) {
-        console.error("Mic blocked:", e);
-        // We can still continue without a mic
-        socket.emit('ready-for-voice', { room });
-      }
-  }
-  startConnection(); // Run this as soon as the page loads
-  // --- END OF NEW LOGIC ---
-
+  // --- Broadcaster File Select ---
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
     if (!file) return;
 
     videoPlayer.src = URL.createObjectURL(file);
-    videoPlayer.muted = false; 
+    videoPlayer.muted = false; // Unmute for broadcaster
     
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
+
+    // This click unblocks audio
     playAllBlockedAudio();
 
     movieStream = videoPlayer.captureStream(); 
@@ -178,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     await renegotiateAll();
   });
 
-  // --- Playback sync (Optimistic UI) ---
+  // --- Video Controls ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
         socket.emit('video_play', { room });
@@ -209,14 +184,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- Mic button (Now just a mute toggle) ---
-  micBtn.addEventListener('click', () => {
-    if (!localStream) return; // Do nothing if mic was blocked
-    
-    micOn = !micOn;
-    localStream.getTracks().forEach(t => t.enabled = micOn);
-    micBtn.querySelector('i').className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+  // --- MIC LOGIC (Copied from drawing room) ---
+  let isMuted = true; // Mic starts muted
+  micBtn.addEventListener('click', async () => {
+    isMuted = !isMuted; 
+    const icon = micBtn.querySelector('i');
+
+    if (!isMuted && !localStream) { // If unmuting and have no stream
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true } 
+        });
+        
+        // This is the correct logic: signal readiness *after* getting mic
+        socket.emit('ready-for-voice', { room });
+        
+        // This click unblocks audio
+        playAllBlockedAudio();
+
+      } catch (e) {
+        console.error("Mic blocked:", e);
+        isMuted = true; // Failed, so reset the state
+      }
+    }
+
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.enabled = !isMuted);
+    }
+    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
   });
+  // --- END OF MIC LOGIC ---
+
 
   // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
@@ -235,15 +233,19 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('existing-voice-users', (ids) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
   
   socket.on('voice-offer', async ({ from, offer }) => {
+    // We MUST answer, even if our mic isn't ready
+    // (This handles the case where User 2 joins but hasn't clicked mic yet)
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
