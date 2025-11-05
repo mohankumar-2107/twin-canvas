@@ -20,11 +20,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const reverseBtn = document.getElementById('reverseBtn');
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
+  
+  // --- New Timeline Elements ---
+  const videoContainer = document.getElementById('videoContainer');
+  const timelineContainer = document.getElementById('timelineContainer');
+  const timeline = document.getElementById('timeline');
+  const currentTimeElem = document.getElementById('currentTime');
+  const durationElem = document.getElementById('duration');
+  let timelineVisible = true;
+  let timelineTimeout;
 
   if (!room) { window.location.href = 'index.html'; return; }
 
+  // Join the room
   socket.emit('join_movie_room', { room, userName });
-  socket.emit('ready-for-voice', { room });
   
   function nameToColor(name) {
     let hash = 0;
@@ -33,6 +42,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const hue = hash % 360;
     return `hsl(${hue}, 70%, 60%)`;
+  }
+  
+  function playAllBlockedAudio() {
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Audio play blocked", e));
+    });
+  }
+  
+  function openFullscreen() {
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen();
+      } else if (elem.webkitRequestFullscreen) { /* Safari */
+        elem.webkitRequestFullscreen();
+      } else if (elem.msRequestFullscreen) { /* IE11 */
+        elem.msRequestFullscreen();
+      }
   }
 
   function getOrCreatePC(socketId) {
@@ -63,40 +89,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
         videoPlayer.play().catch(() => {
           const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound";
+          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
           btn.style = `
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            position: fixed; bottom: 20px; right: 20px;
             background: #7c5cff; color: white; border: none;
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
+            z-index: 100;
           `;
           document.body.appendChild(btn);
-          btn.onclick = () => { videoPlayer.play().then(() => btn.remove()); };
+          btn.onclick = () => { 
+              videoPlayer.play().then(() => btn.remove());
+              openFullscreen();
+              playAllBlockedAudio();
+          };
         });
-
-        playPauseBtn.disabled = false;
-        skipBtn.disabled = false;
-        reverseBtn.disabled = false;
       }
 
       if (event.track.kind === "audio") {
-        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
+        if (stream.getVideoTracks().length === 0) { // Mic-only stream
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
               audio.id = `audio-${socketId}`;
-              // audio.autoplay = true; // This will be blocked
               audio.controls = false;
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
-            
-            // --- FIX #1: TRY TO PLAY THE MIC AUDIO ---
-            // It will fail if the user hasn't clicked, but will
-            // succeed if they have (e.g., by clicking their own mic).
-            audio.play().catch(e => {
-                console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
-            });
-            // --- END OF FIX #1 ---
+            audio.play().catch(e => console.warn(`Mic audio for ${socketId} blocked.`));
         }
       }
     };
@@ -126,108 +145,108 @@ document.addEventListener('DOMContentLoaded', () => {
     
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
+    playAllBlockedAudio();
 
     movieStream = videoPlayer.captureStream(); 
-
-    for (const id of Object.keys(peerConnections)) {
-      const pc = getOrCreatePC(id);
-      
-      // --- FIX #2: SAFER WAY TO PROTECT MIC STREAM ---
-      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
-      
-      // Remove all old video tracks
-      pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      
-      // Remove old audio tracks THAT ARE NOT the mic
-      pc.getSenders().filter(s => {
-          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
-      }).forEach(s => pc.removeTrack(s));
-      
-      // Add the new movie tracks (video + audio)
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-      // --- END OF FIX #2 ---
-    }
     await renegotiateAll();
   });
 
-  // --- Playback sync (Optimistic UI) ---
+  // --- Video Controls ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
-        videoPlayer.play();
         socket.emit('video_play', { room });
     } else {
-        videoPlayer.pause();
         socket.emit('video_pause', { room });
     }
   });
-
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
-
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
-    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
-  });
-
-  videoPlayer.addEventListener('play', () => {
-    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-  });
-
-  videoPlayer.addEventListener('pause', () => {
-    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
 
   socket.on('video_play', () => {
-    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
+    videoPlayer.play().catch(()=>{});
+    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
   socket.on('video_pause', () => {
-    if (!videoPlayer.paused) videoPlayer.pause();
+    videoPlayer.pause();
+    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
   socket.on('video_seek', (time) => {
-    if (Math.abs(videoPlayer.currentTime - time) > 1) {
-        videoPlayer.currentTime = time;
-    }
+    videoPlayer.currentTime = time;
   });
 
-  // --- Mic button ---
-  let micOn = false;
+  // --- NEW: Timeline & Double-tap Logic ---
+  function formatTime(seconds) {
+      const min = Math.floor(seconds / 60);
+      const sec = Math.floor(seconds % 60);
+      return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+  }
+
+  videoPlayer.addEventListener('loadedmetadata', () => {
+      timeline.max = videoPlayer.duration;
+      durationElem.textContent = formatTime(videoPlayer.duration);
+  });
+  videoPlayer.addEventListener('timeupdate', () => {
+      timeline.value = videoPlayer.currentTime;
+      currentTimeElem.textContent = formatTime(videoPlayer.currentTime);
+  });
+  timeline.addEventListener('input', () => {
+      socket.emit('video_seek', { room, time: timeline.value });
+  });
+
+  function toggleTimeline() {
+      timelineVisible = !timelineVisible;
+      timelineContainer.style.opacity = timelineVisible ? '1' : '0';
+      
+      // Auto-hide after 3 seconds
+      if (timelineVisible) {
+          clearTimeout(timelineTimeout); // Clear any old timer
+          timelineTimeout = setTimeout(() => {
+              timelineContainer.style.opacity = '0';
+              timelineVisible = false;
+          }, 3000);
+      }
+  }
+  videoContainer.addEventListener('dblclick', toggleTimeline);
+  // --- END of Timeline Logic ---
+
+
+  // --- MIC LOGIC (Copied from working drawing room) ---
+  let isMuted = true; // Mic starts muted
   micBtn.addEventListener('click', async () => {
-    micOn = !micOn;
+    isMuted = !isMuted; 
     const icon = micBtn.querySelector('i');
 
-    if (micOn && !localStream) {
+    if (!isMuted && !localStream) { // If unmuting and have no stream
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
         
-        for (const id of Object.keys(peerConnections)) {
-          const pc = getOrCreatePC(id);
-          localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
-        }
-        await renegotiateAll();
-
-        // --- FIX #1 (Part B): Force-play all waiting mic audio ---
-        // This click counts as user interaction, unblocking audio
-        audioContainer.querySelectorAll('audio').forEach(audio => {
-            audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
-        });
+        // This is the correct logic: signal readiness *after* getting mic
+        socket.emit('ready-for-voice', { room });
+        
+        // This click unblocks audio
+        playAllBlockedAudio();
 
       } catch (e) {
         console.error("Mic blocked:", e);
-        micOn = false;
+        isMuted = true; // Failed, so reset the state
       }
     }
 
     if (localStream) {
-      localStream.getTracks().forEach(t => t.enabled = micOn);
+      localStream.getTracks().forEach(t => t.enabled = !isMuted);
     }
-    icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
   });
+  // --- END OF MIC LOGIC ---
+
 
   // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
@@ -246,14 +265,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('existing-voice-users', (ids) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
+    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
+  
   socket.on('voice-offer', async ({ from, offer }) => {
+    // We MUST answer, even if our mic isn't ready
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
