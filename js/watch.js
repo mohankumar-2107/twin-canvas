@@ -15,9 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoPlayer = document.getElementById('moviePlayer');
   const fileInput = document.getElementById('fileInput');
   const filePrompt = document.getElementById('filePrompt');
+
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
+
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
@@ -89,14 +91,9 @@ document.addEventListener('DOMContentLoaded', () => {
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
-            
-            // --- FIX #1: TRY TO PLAY THE MIC AUDIO ---
-            // It will fail if the user hasn't clicked, but will
-            // succeed if they have (e.g., by clicking their own mic).
             audio.play().catch(e => {
                 console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
             });
-            // --- END OF FIX #1 ---
         }
       }
     };
@@ -127,25 +124,26 @@ document.addEventListener('DOMContentLoaded', () => {
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
+    // --- THIS IS THE FIX ---
+    // This "click" on the file input counts as a user interaction.
+    // We can now safely play any blocked audio streams from our friends.
+    audioContainer.querySelectorAll('audio').forEach(audio => {
+        audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
+    });
+    // --- END OF FIX ---
+
     movieStream = videoPlayer.captureStream(); 
 
     for (const id of Object.keys(peerConnections)) {
       const pc = getOrCreatePC(id);
       
-      // --- FIX #2: SAFER WAY TO PROTECT MIC STREAM ---
       const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
-      
-      // Remove all old video tracks
       pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
-      
-      // Remove old audio tracks THAT ARE NOT the mic
       pc.getSenders().filter(s => {
           return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
       }).forEach(s => pc.removeTrack(s));
       
-      // Add the new movie tracks (video + audio)
       movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-      // --- END OF FIX #2 ---
     }
     await renegotiateAll();
   });
@@ -211,8 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         await renegotiateAll();
 
-        // --- FIX #1 (Part B): Force-play all waiting mic audio ---
-        // This click counts as user interaction, unblocking audio
+        // This click also counts as user interaction
         audioContainer.querySelectorAll('audio').forEach(audio => {
             audio.play().catch(e => console.warn("Could not play friend's audio yet", e));
         });
