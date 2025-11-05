@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https.://twin-canvas.onrender.com'); // your signaling server
+  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
   let localStream;        // optional mic
@@ -15,17 +15,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoPlayer = document.getElementById('moviePlayer');
   const fileInput = document.getElementById('fileInput');
   const filePrompt = document.getElementById('filePrompt');
+
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
+
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
-  let isMuted = true; // Mic starts muted
 
   if (!room) { window.location.href = 'index.html'; return; }
 
-  // Join the room
   socket.emit('join_movie_room', { room, userName });
+  socket.emit('ready-for-voice', { room });
   
   function nameToColor(name) {
     let hash = 0;
@@ -35,22 +36,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const hue = hash % 360;
     return `hsl(${hue}, 70%, 60%)`;
   }
-  
+
+  // --- THIS IS THE AUDIO "UNBLOCKING" FUNCTION ---
   function playAllBlockedAudio() {
     audioContainer.querySelectorAll('audio').forEach(audio => {
-        audio.play().catch(e => console.warn("Audio play blocked", e));
+        audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
     });
-  }
-  
-  function openFullscreen() {
-      const elem = document.documentElement;
-      if (elem.requestFullscreen) {
-        elem.requestFullscreen();
-      } else if (elem.webkitRequestFullscreen) { /* Safari */
-        elem.webkitRequestFullscreen();
-      } else if (elem.msRequestFullscreen) { /* IE11 */
-        elem.msRequestFullscreen();
-      }
   }
 
   function getOrCreatePC(socketId) {
@@ -81,18 +72,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         videoPlayer.play().catch(() => {
           const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
+          btn.textContent = "🔊 Tap to enable sound";
           btn.style = `
-            position: fixed; bottom: 20px; right: 20px;
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
             background: #7c5cff; color: white; border: none;
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
-            z-index: 100;
           `;
           document.body.appendChild(btn);
+          // This click on the "Tap to enable" button ALSO counts as an interaction
           btn.onclick = () => { 
               videoPlayer.play().then(() => btn.remove());
-              openFullscreen();
-              playAllBlockedAudio();
+              playAllBlockedAudio(); // Try to play mic audio too
           };
         });
 
@@ -102,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (event.track.kind === "audio") {
-        if (stream.getVideoTracks().length === 0) { // Mic-only stream
+        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
             let audio = document.getElementById(`audio-${socketId}`);
             if (!audio) {
               audio = document.createElement("audio");
@@ -111,7 +101,11 @@ document.addEventListener('DOMContentLoaded', () => {
               audioContainer.appendChild(audio);
             }
             audio.srcObject = stream;
-            audio.play().catch(e => console.warn(`Mic audio for ${socketId} blocked.`));
+            
+            // --- AUDIO FIX ---
+            // Don't try to play here. Just attach the stream.
+            // The user interaction (mic click or file click) will play it.
+            // audio.play().catch(...) <-- REMOVED
         }
       }
     };
@@ -131,51 +125,75 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- Broadcaster File Select ---
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
     if (!file) return;
 
     videoPlayer.src = URL.createObjectURL(file);
-    
-    // --- FIX #1: Broadcaster MUST be muted to prevent echo ---
-    videoPlayer.muted = true; 
+    videoPlayer.muted = false; 
     
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
+    // --- AUDIO FIX ---
+    // This click on "Choose File" is a user interaction.
+    // Use it to unblock all waiting mic audio streams.
     playAllBlockedAudio();
+    // --- END OF FIX ---
 
     movieStream = videoPlayer.captureStream(); 
+
+    for (const id of Object.keys(peerConnections)) {
+      const pc = getOrCreatePC(id);
+      
+      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+      pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
+      pc.getSenders().filter(s => {
+          return s.track && s.track.kind === 'audio' && s.track !== localAudioTrack;
+      }).forEach(s => pc.removeTrack(s));
+      
+      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+    }
     await renegotiateAll();
   });
 
-  // --- Video Controls (Work for everyone) ---
+  // --- Playback sync (Optimistic UI) ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
+        videoPlayer.play();
         socket.emit('video_play', { room });
     } else {
+        videoPlayer.pause();
         socket.emit('video_pause', { room });
     }
   });
+
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    socket.emit('video_seek', { room, time: newTime });
-  });
-  reverseBtn.addEventListener('click', () => {
-    const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
-  // Server is the source of truth for video state
-  socket.on('video_play', () => {
-    videoPlayer.play().catch(()=>{});
+  reverseBtn.addEventListener('click', () => {
+    const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime;
+    socket.emit('video_seek', { room, time: newTime });
+  });
+
+  videoPlayer.addEventListener('play', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
   });
-  socket.on('video_pause', () => {
-    videoPlayer.pause();
+
+  videoPlayer.addEventListener('pause', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+  });
+
+  socket.on('video_play', () => {
+    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
+  });
+  socket.on('video_pause', () => {
+    if (!videoPlayer.paused) videoPlayer.pause();
   });
   socket.on('video_seek', (time) => {
     if (Math.abs(videoPlayer.currentTime - time) > 1) {
@@ -183,36 +201,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- MIC LOGIC (Copied from drawing room) ---
+  // --- Mic button ---
+  let micOn = false;
   micBtn.addEventListener('click', async () => {
-    isMuted = !isMuted; 
+    micOn = !micOn;
     const icon = micBtn.querySelector('i');
 
-    if (!isMuted && !localStream) { // If unmuting and have no stream
+    if (micOn && !localStream) {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
         
-        // This is the correct logic: signal readiness *after* getting mic
-        socket.emit('ready-for-voice', { room });
-        
-        // This click unblocks audio
+        for (const id of Object.keys(peerConnections)) {
+          const pc = getOrCreatePC(id);
+          localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
+        }
+        await renegotiateAll();
+
+        // --- AUDIO FIX ---
+        // This click on the mic button is a user interaction.
+        // Use it to unblock all waiting mic audio streams.
         playAllBlockedAudio();
+        // --- END OF FIX ---
 
       } catch (e) {
         console.error("Mic blocked:", e);
-        isMuted = true; // Failed, so reset the state
+        micOn = false;
       }
     }
 
     if (localStream) {
-      localStream.getTracks().forEach(t => t.enabled = !isMuted);
+      localStream.getTracks().forEach(t => t.enabled = micOn);
     }
-    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
+    icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
-  // --- END OF MIC LOGIC ---
-
 
   // --- Signaling Events ---
   socket.on('update_users', (userNames) => {
@@ -231,29 +254,20 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('existing-voice-users', (ids) => {
-    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
-    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
-  
-  // --- FIX #2: REMOVED the broken check ---
-  // The receiver MUST always answer, even if their mic isn't ready.
   socket.on('voice-offer', async ({ from, offer }) => {
-    // if (!localStream) return; // <-- THIS WAS THE BUG. IT IS GONE.
-    
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
   });
-  // --- END OF FIX #2 ---
-
   socket.on('voice-answer', async ({ from, answer }) => {
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
