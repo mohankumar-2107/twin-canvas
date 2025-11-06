@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-
+  
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   // We are NOT streaming. This is a Sync Player.
