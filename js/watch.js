@@ -256,5 +256,30 @@ document.addEventListener('DOMContentLoaded', () => {
     delete peerConnections[socketId];
     document.getElementById(`audio-${socketId}`)?.remove();
   });
+  const timeline = document.getElementById("timeline");
+const currentTimeLabel = document.getElementById("currentTime");
+const durationLabel = document.getElementById("duration");
+
+// update time labels
+function formatTime(t) {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+videoPlayer.addEventListener("loadedmetadata", () => {
+  durationLabel.textContent = formatTime(videoPlayer.duration);
+  timeline.max = videoPlayer.duration;
+});
+
+videoPlayer.addEventListener("timeupdate", () => {
+  timeline.value = videoPlayer.currentTime;
+  currentTimeLabel.textContent = formatTime(videoPlayer.currentTime);
+});
+
+timeline.addEventListener("input", () => {
+  videoPlayer.currentTime = timeline.value;
+  socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+});
 
 });
