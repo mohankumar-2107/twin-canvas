@@ -16,15 +16,14 @@
         <div id="filePrompt" class="file-prompt">
             <i class="fas fa-upload"></i>
             <h3>Choose your movie file</h3>
-            <!-- This text is updated for the Sync Player logic -->
             <p>Both users must select the same file from their computer.</p>
             <input type="file" id="fileInput" accept="video/*">
         </div>
 
-        <!-- NEW: Timeline / Scrubber Bar -->
+        <!-- ✅ NEW DRAGGABLE TIMELINE -->
         <div class="timeline-container" id="timelineContainer">
             <span id="currentTime">00:00</span>
-            <input type="range" id="timeline" value="0" step="0.1">
+            <input type="range" id="timeline" value="0" min="0" max="100" step="0.1">
             <span id="duration">00:00</span>
         </div>
 
@@ -36,7 +35,7 @@
         </div>
     </div>
     
-    <div id="audio-container"></div> <!-- For voice chat -->
+    <div id="audio-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script src="/js/watch.js"></script>
