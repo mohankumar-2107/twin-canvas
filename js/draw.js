@@ -9,6 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const hue = hash % 360;
         return `hsl(${hue}, 70%, 60%)`;
     }
+    
+    function playAllBlockedAudio() {
+        audioContainer.querySelectorAll('audio').forEach(audio => {
+            audio.play().catch(e => console.warn("Audio play blocked", e));
+        });
+    }
 
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -30,6 +36,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearBtn = document.getElementById('clearBtn');
     const saveBtn = document.getElementById('saveBtn');
     const undoBtn = document.getElementById('undoBtn');
+    const micBtn = document.getElementById('micBtn'); 
+    const audioContainer = document.getElementById('audio-container'); 
 
     const urlParams = new URLSearchParams(window.location.search);
     const room = urlParams.get('room');
@@ -39,30 +47,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.emit('join_room', { room, userName });
 
-    // --- ADDED VOICE CHAT LOGIC ---
-    const micBtn = document.getElementById('micBtn');
-    const audioContainer = document.getElementById('audio-container');
+    // --- This is the working Voice Chat Logic ---
     let localStream;
     let peerConnections = {};
     let isMuted = true;
     const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
     micBtn.addEventListener('click', async () => {
-        isMuted = !isMuted;
-        const micIcon = micBtn.querySelector('i');
-        if (!localStream) {
+        isMuted = !isMuted; 
+        const icon = micBtn.querySelector('i');
+
+        if (!isMuted && !localStream) { // If unmuting and have no stream
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: true } 
+                });
+                
+                // This is the correct logic: signal readiness *after* getting mic
                 socket.emit('ready-for-voice', { room });
-            } catch (error) { console.error("Mic access error.", error); isMuted = true; return; }
+                
+                // This click unblocks audio
+                playAllBlockedAudio();
+
+            } catch (e) {
+                console.error("Mic blocked:", e);
+                isMuted = true; 
+            }
         }
-        localStream.getTracks().forEach(track => track.enabled = !isMuted);
-        micIcon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
+
+        if (localStream) {
+            localStream.getTracks().forEach(t => t.enabled = !isMuted); 
+        }
+        icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
     });
-    // --- END OF VOICE CHAT LOGIC ---
+    // --- End of working Voice Chat Logic ---
 
     function draw(x, y, lastX, lastY, color, width, tool) {
-        // This is your original, working draw function
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = width;
@@ -85,7 +105,6 @@ document.addEventListener('DOMContentLoaded', () => {
         [lastX, lastY] = [x, y];
         saveState();
     }
-
     function handleMove(e) {
         if (!isDrawing) return;
         const { x, y } = getCoordinates(e);
@@ -99,9 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('draw', drawData);
         [lastX, lastY] = [x, y];
     }
-
     function handleEnd() { isDrawing = false; ctx.beginPath(); }
-
     function getCoordinates(e) {
         if (e.touches && e.touches.length > 0) {
             return { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -144,14 +161,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     undoBtn.addEventListener('click', undoLast);
-    window.addEventListener('resize', () => { /* ... (same as before) ... */ });
+    
+    window.addEventListener('resize', () => {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        ctx.putImageData(imageData, 0, 0);
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+    });
 
     // --- SOCKET.IO LISTENERS ---
     
-    // --- ADDED WORKING LOGO LOGIC ---
     socket.on('update_users', (userNames) => {
         const initialsContainer = document.getElementById('userInitials');
-        initialsContainer.innerHTML = '';
+        initialsContainer.innerHTML = ''; 
         userNames.forEach(name => {
             const initial = name.charAt(0).toUpperCase();
             const color = nameToColor(name);
@@ -163,7 +187,6 @@ document.addEventListener('DOMContentLoaded', () => {
             initialsContainer.appendChild(circle);
         });
     });
-    // --- END OF LOGO LOGIC ---
 
     socket.on('draw', (data) => { draw(data.x, data.y, data.lastX, data.lastY, data.color, data.width, data.tool); });
     socket.on('clear', () => { ctx.clearRect(0, 0, canvas.width, canvas.height); });
@@ -173,58 +196,74 @@ document.addEventListener('DOMContentLoaded', () => {
         img.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0); };
     });
     
-    // --- ADDED WORKING WEBRTC LISTENERS ---
-    const createPeerConnection = (socketId) => {
-        const pc = new RTCPeerConnection(configuration);
+    // --- This is the working WebRTC Logic ---
+    function getOrCreatePC(socketId) {
+        let pc = peerConnections[socketId];
+        if (pc) return pc;
+        pc = new RTCPeerConnection(configuration);
         peerConnections[socketId] = pc;
         if (localStream) {
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
         }
-        pc.onicecandidate = e => { if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate }); };
-        pc.ontrack = e => {
-            let audio = document.getElementById(`audio-${socketId}`);
-            if (!audio) {
-                audio = document.createElement('audio');
-                audio.id = `audio-${socketId}`;
-                audio.autoplay = true;
-                audioContainer.appendChild(audio);
+        pc.onicecandidate = (e) => {
+            if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
+        };
+        pc.ontrack = (event) => {
+            const stream = event.streams[0];
+            if (event.track.kind === "audio") {
+                if (stream.getVideoTracks().length === 0) {
+                    let audio = document.getElementById(`audio-${socketId}`);
+                    if (!audio) {
+                        audio = document.createElement("audio");
+                        audio.id = `audio-${socketId}`;
+                        audio.controls = false;
+                        audioContainer.appendChild(audio);
+                    }
+                    audio.srcObject = stream;
+                    audio.play().catch(e => console.warn(`Mic audio for ${socketId} blocked.`));
+                }
             }
-            audio.srcObject = e.streams[0];
         };
         return pc;
-    };
-    socket.on('existing-voice-users', (userIds) => {
+    }
+    
+    socket.on('existing-voice-users', (ids) => {
         if (!localStream) return;
-        userIds.forEach(id => {
-            const pc = createPeerConnection(id);
-            pc.createOffer().then(offer => pc.setLocalDescription(offer))
-              .then(() => socket.emit('voice-offer', { room, to: id, offer: pc.localDescription }));
+        ids.forEach(id => {
+          if (id !== socket.id) sendOffer(id);
         });
     });
-    socket.on('user-joined-voice', (socketId) => {
+    socket.on('user-joined-voice', ({ socketId }) => {
         if (!localStream) return;
-        const pc = createPeerConnection(socketId);
-        pc.createOffer().then(offer => pc.setLocalDescription(offer))
-          .then(() => socket.emit('voice-offer', { room, to: socketId, offer: pc.localDescription }));
+        if (socketId !== socket.id) sendOffer(socketId);
     });
-    socket.on('voice-offer', ({ from, offer }) => {
-        if (!localStream) return;
-        const pc = createPeerConnection(from);
-        pc.setRemoteDescription(new RTCSessionDescription(offer))
-          .then(() => pc.createAnswer())
-          .then(answer => pc.setLocalDescription(answer))
-          .then(() => socket.emit('voice-answer', { room, to: from, answer: pc.localDescription }));
+    
+    async function sendOffer(to) {
+        const pc = getOrCreatePC(to);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('voice-offer', { room, to, offer: pc.localDescription });
+    }
+
+    socket.on('voice-offer', async ({ from, offer }) => {
+        if (!localStream) return; // Must have mic to answer
+        const pc = getOrCreatePC(from);
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('voice-answer', { room, to: from, answer: pc.localDescription });
     });
-    socket.on('voice-answer', ({ from, answer }) => {
-        peerConnections[from]?.setRemoteDescription(new RTCSessionDescription(answer));
+    socket.on('voice-answer', async ({ from, answer }) => {
+        const pc = getOrCreatePC(from);
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
     });
-    socket.on('ice-candidate', ({ from, candidate }) => {
-        peerConnections[from]?.addIceCandidate(new RTCIceCandidate(candidate));
+    socket.on('ice-candidate', async ({ from, candidate }) => {
+        const pc = getOrCreatePC(from);
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
     });
     socket.on('user-left-voice', (socketId) => {
         peerConnections[socketId]?.close();
         delete peerConnections[socketId];
         document.getElementById(`audio-${socketId}`)?.remove();
     });
-    // --- END OF WEBRTC LISTENERS ---
 });
