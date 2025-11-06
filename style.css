@@ -745,4 +745,65 @@ body.movie-theme {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
 }
+/* Timeline container layout */
+.timeline-container {
+    width: 90%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px auto;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* Time labels */
+#currentTime, #duration {
+    width: 50px;
+    text-align: center;
+}
+
+/* Slider styling */
+#timeline {
+    flex: 1;
+    appearance: none;
+    height: 6px;
+    background: rgba(255,255,255,0.4);
+    border-radius: 4px;
+    outline: none;
+    transition: height 0.2s ease;
+    cursor: pointer;
+}
+
+/* Mouse hover: Thicker like YouTube hover */
+#timeline:hover {
+    height: 10px;
+}
+
+/* Progress knob */
+#timeline::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #1e90ff;
+    border: 2px solid white;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+#timeline::-webkit-slider-thumb:hover {
+    transform: scale(1.3);
+}
+
+/* Firefox thumb */
+#timeline::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #1e90ff;
+    border: 2px solid white;
+    cursor: pointer;
+}
+
 
