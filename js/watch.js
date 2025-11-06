@@ -26,7 +26,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   socket.emit("join_movie_room", { room, userName });
 
-  customBtn.onclick = () => fileInput.click();
+ customBtn.addEventListener("click", () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener("click", (e) => {
+  e.stopPropagation(); // prevent backdrop swallowing click
+});
 
   socket.on("update_users", (names) => {
     initialsContainer.innerHTML = "";
