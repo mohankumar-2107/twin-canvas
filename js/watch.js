@@ -2,9 +2,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
-  let movieStream;
+  // We are NOT streaming. Both users must select a file.
+  // const movieStream; <-- REMOVED
+  // let isBroadcaster = false; <-- REMOVED
+
   let localStream;        // optional mic
-  let isBroadcaster = false;
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -21,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
   
-  // --- New Timeline Elements ---
+  // --- Timeline Elements ---
   const videoContainer = document.getElementById('videoContainer');
   const timelineContainer = document.getElementById('timelineContainer');
   const timeline = document.getElementById('timeline');
@@ -36,15 +38,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Join the room
   socket.emit('join_movie_room', { room, userName });
   
-  // --- BUG 1 FIX: REMOVED 'ready-for-voice' from here. ---
-
   function nameToColor(name) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
     const hue = hash % 360;
-    // --- SYNTAX FIX ---
     return `hsl(${hue}, 70%, 60%)`;
   }
   
@@ -65,100 +64,49 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   }
 
+  // --- This is the working WebRTC Logic from draw.js ---
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
-
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
-
     if (localStream) {
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     }
-    if (isBroadcaster && movieStream) {
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-    }
-
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
+        if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
-
-    // --- BUG 2: Corrected 'ontrack' logic ---
     pc.ontrack = (event) => {
-      const stream = event.streams[0];
-      
-      // Check if this stream has video. If yes, it's the MOVIE.
-      if (stream.getVideoTracks().length > 0) {
-        filePrompt.style.display = 'none';
-        videoPlayer.srcObject = stream; // This stream has BOTH video and movie audio
-        videoPlayer.muted = false;
-
-        videoPlayer.play().catch(() => {
-          const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
-          btn.style = `
-            position: fixed; bottom: 20px; right: 20px;
-            background: #7c5cff; color: white; border: none;
-            padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
-            z-index: 100;
-          `;
-          document.body.appendChild(btn);
-          btn.onclick = () => { 
-              videoPlayer.play().then(() => btn.remove());
-              openFullscreen();
-              playAllBlockedAudio();
-          };
-        });
-      }
-
-      // If the stream has NO video, it's the MIC.
-      else if (stream.getVideoTracks().length === 0) { 
-          // --- SYNTAX FIX ---
-          let audio = document.getElementById(`audio-${socketId}`);
-          if (!audio) {
-            audio = document.createElement("audio");
-            audio.id = `audio-${socketId}`; // --- SYNTAX FIX ---
-            audio.controls = false;
-            audioContainer.appendChild(audio);
-          }
-          audio.srcObject = stream;
-          audio.play().catch(e => {
-              console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
-          });
-      }
+        const stream = event.streams[0];
+        if (event.track.kind === "audio") {
+            if (stream.getVideoTracks().length === 0) {
+                let audio = document.getElementById(`audio-${socketId}`);
+                if (!audio) {
+                    audio = document.createElement("audio");
+                    audio.id = `audio-${socketId}`;
+                    audio.controls = false;
+                    audioContainer.appendChild(audio);
+                }
+                audio.srcObject = stream;
+                audio.play().catch(e => console.warn(`Mic audio for ${socketId} blocked.`));
+            }
+        }
     };
-    // --- END OF BUG 2 FIX ---
-    
     return pc;
   }
+  // --- End of working WebRTC Logic ---
 
-  async function sendOffer(to) {
-    const pc = getOrCreatePC(to);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('voice-offer', { room, to, offer: pc.localDescription });
-  }
 
-  async function renegotiateAll() {
-    for (const id of Object.keys(peerConnections)) {
-      await sendOffer(id);
-    }
-  }
-
-  fileInput.addEventListener('change', async () => {
-    isBroadcaster = true;
+  // --- File Select Logic (Sync Player) ---
+  fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
-    if (!file) return;
-
-    videoPlayer.src = URL.createObjectURL(file);
-    videoPlayer.muted = false; // Unmute for broadcaster
-    
-    await videoPlayer.play().catch(() => {});
-    filePrompt.style.display = 'none';
-    playAllBlockedAudio();
-
-    movieStream = videoPlayer.captureStream(); 
-    await renegotiateAll();
+    if (file) {
+        videoPlayer.src = URL.createObjectURL(file);
+        filePrompt.style.display = 'none';
+        
+        // This click unblocks audio
+        playAllBlockedAudio();
+    }
   });
 
   // --- Video Controls ---
@@ -188,13 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
     playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
   });
   socket.on('video_seek', (time) => {
-    // Use a buffer to prevent fighting
-    if (Math.abs(videoPlayer.currentTime - time) > 1) {
-        videoPlayer.currentTime = time;
-    }
+    videoPlayer.currentTime = time;
   });
 
-  // --- NEW: Timeline & Double-tap Logic ---
+  // --- Timeline & Double-tap Logic ---
   function formatTime(seconds) {
       const min = Math.floor(seconds / 60);
       const sec = Math.floor(seconds % 60);
@@ -205,12 +150,12 @@ document.addEventListener('DOMContentLoaded', () => {
       durationElem.textContent = formatTime(videoPlayer.duration);
   });
   videoPlayer.addEventListener('timeupdate', () => {
-      if (!timeline.matches(':active')) { // Only update if user is not dragging
+      if (!timeline.matches(':active')) { 
           timeline.value = videoPlayer.currentTime;
       }
       currentTimeElem.textContent = formatTime(videoPlayer.currentTime);
   });
-  timeline.addEventListener('input', () => { // Send event while dragging
+  timeline.addEventListener('input', () => { 
       socket.emit('video_seek', { room, time: timeline.value });
   });
   function toggleTimeline() {
@@ -221,10 +166,15 @@ document.addEventListener('DOMContentLoaded', () => {
           timelineTimeout = setTimeout(() => {
               timelineContainer.style.opacity = '0';
               timelineVisible = false;
-          }, 3000); // Hide after 3 seconds
+          }, 3000); 
       }
   }
   videoContainer.addEventListener('dblclick', toggleTimeline);
+  
+  // This click also unblocks audio
+  videoContainer.addEventListener('click', () => {
+      playAllBlockedAudio();
+  });
   // --- END of Timeline Logic ---
 
 
@@ -239,16 +189,11 @@ document.addEventListener('DOMContentLoaded', () => {
             audio: { echoCancellation: true } 
         });
         
-        // --- THIS IS THE FIX ---
         // This is the correct logic: signal readiness *after* getting mic
         socket.emit('ready-for-voice', { room });
         
         // This click unblocks audio
         playAllBlockedAudio();
-        
-        // --- ADDED ---
-        // Now that we have a mic, we must renegotiate to add it
-        await renegotiateAll(); 
 
       } catch (e) {
         console.error("Mic blocked:", e);
@@ -292,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   socket.on('voice-offer', async ({ from, offer }) => {
-    // We MUST answer, even if our mic isn't ready
+    if (!localStream) return; // Don't answer if mic isn't ready
     const pc = getOrCreatePC(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
