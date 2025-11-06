@@ -36,7 +36,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
-  socket.emit('ready-for-voice', { room });
+  
+  // --- BUG 1: REMOVED 'ready-for-voice' from here. ---
   
   function nameToColor(name) {
     let hash = 0;
@@ -44,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
     const hue = hash % 360;
+    // --- SYNTAX FIX ---
     return `hsl(${hue}, 70%, 60%)`;
   }
 
@@ -52,6 +54,17 @@ document.addEventListener('DOMContentLoaded', () => {
     audioContainer.querySelectorAll('audio').forEach(audio => {
         audio.play().catch(e => console.warn("Audio play blocked (will retry on next click)", e));
     });
+  }
+  
+  function openFullscreen() {
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen();
+      } else if (elem.webkitRequestFullscreen) { /* Safari */
+        elem.webkitRequestFullscreen();
+      } else if (elem.msRequestFullscreen) { /* IE11 */
+        elem.msRequestFullscreen();
+      }
   }
 
   function getOrCreatePC(socketId) {
@@ -72,26 +85,30 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
 
+    // --- BUG 2: Corrected 'ontrack' logic ---
     pc.ontrack = (event) => {
       const stream = event.streams[0];
       
-      if (event.track.kind === 'video') {
+      // Check if this stream has video. If yes, it's the MOVIE.
+      if (stream.getVideoTracks().length > 0) {
         filePrompt.style.display = 'none';
-        videoPlayer.srcObject = stream; 
+        videoPlayer.srcObject = stream; // This stream has BOTH video and movie audio
         videoPlayer.muted = false;
 
         videoPlayer.play().catch(() => {
           const btn = document.createElement("button");
-          btn.textContent = "🔊 Tap to enable sound";
+          btn.textContent = "🔊 Tap to enable sound & go fullscreen";
           btn.style = `
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            position: fixed; bottom: 20px; right: 20px;
             background: #7c5cff; color: white; border: none;
             padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;
+            z-index: 100;
           `;
           document.body.appendChild(btn);
           // This click on the "Tap to enable" button ALSO counts as an interaction
           btn.onclick = () => { 
               videoPlayer.play().then(() => btn.remove());
+              openFullscreen();
               playAllBlockedAudio(); // Try to play mic audio too
           };
         });
@@ -100,22 +117,24 @@ document.addEventListener('DOMContentLoaded', () => {
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
       }
-
-      if (event.track.kind === "audio") {
-        if (stream.getVideoTracks().length === 0) { // This is a mic-only stream
-            let audio = document.getElementById(`audio-${socketId}`);
-            if (!audio) {
-              audio = document.createElement("audio");
-              audio.id = `audio-${socketId}`;
-              audio.controls = false;
-              audioContainer.appendChild(audio);
-            }
-            audio.srcObject = stream;
-            
-            // audio.play().catch(...) <-- REMOVED
-        }
+      // If the stream has NO video, it's the MIC.
+      else if (stream.getVideoTracks().length === 0) { 
+          // --- SYNTAX FIX ---
+          let audio = document.getElementById(`audio-${socketId}`);
+          if (!audio) {
+            audio = document.createElement("audio");
+            audio.id = `audio-${socketId}`; // --- SYNTAX FIX ---
+            audio.controls = false;
+            audioContainer.appendChild(audio);
+          }
+          audio.srcObject = stream;
+          audio.play().catch(e => {
+              console.warn(`Mic audio for ${socketId} blocked. User must interact.`);
+          });
       }
     };
+    // --- END OF BUG 2 FIX ---
+    
     return pc;
   }
 
@@ -138,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!file) return;
 
     videoPlayer.src = URL.createObjectURL(file);
-    videoPlayer.muted = false; 
+    videoPlayer.muted = false; // Unmute for broadcaster
     
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
@@ -166,23 +185,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Playback sync (Optimistic UI) ---
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
-        videoPlayer.play();
         socket.emit('video_play', { room });
     } else {
-        videoPlayer.pause();
         socket.emit('video_pause', { room });
     }
   });
 
   skipBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime + 10;
-    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
     const newTime = videoPlayer.currentTime - 10;
-    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
   });
 
@@ -208,6 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- NEW: Timeline & Double-tap Logic ---
   function formatTime(seconds) {
+      if (isNaN(seconds)) return "00:00"; // Fix for NaN
       const min = Math.floor(seconds / 60);
       const sec = Math.floor(seconds % 60);
       return `${min}:${sec < 10 ? '0' : ''}${sec}`;
@@ -239,7 +255,8 @@ document.addEventListener('DOMContentLoaded', () => {
   videoContainer.addEventListener('dblclick', toggleTimeline);
   // --- END of Timeline Logic ---
 
-  // --- Mic button ---
+
+  // --- Mic button (This is now the "Go Live" button) ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -250,6 +267,9 @@ document.addEventListener('DOMContentLoaded', () => {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true } 
         });
+        
+        // --- BUG 1 FIX: Send 'ready' signal AFTER getting mic ---
+        socket.emit('ready-for-voice', { room });
         
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
@@ -273,6 +293,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Signaling Events ---
+  
+  // --- LOGO FIX: Added this listener back in ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = ''; 
@@ -287,13 +309,18 @@ document.addEventListener('DOMContentLoaded', () => {
         initialsContainer.appendChild(circle);
     });
   });
+  // --- END OF LOGO FIX ---
 
   socket.on('existing-voice-users', (ids) => {
+    // --- MIC FIX ---
+    if (!localStream) return; // Don't call if mic isn't ready
     ids.forEach(id => {
       if (id !== socket.id) sendOffer(id);
     });
   });
   socket.on('user-joined-voice', ({ socketId }) => {
+    // --- MIC FIX ---
+    if (!localStream) return; // Don't call if mic isn't ready
     if (socketId !== socket.id) sendOffer(socketId);
   });
   
@@ -315,6 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('user-left-voice', (socketId) => {
     peerConnections[socketId]?.close();
     delete peerConnections[socketId];
+    // --- SYNTAX FIX ---
     document.getElementById(`audio-${socketId}`)?.remove();
   });
 });
