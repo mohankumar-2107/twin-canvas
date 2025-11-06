@@ -260,5 +260,4 @@ document.addEventListener('DOMContentLoaded', () => {
     delete peerConnections[socketId];
     document.getElementById(`audio-${socketId}`)?.remove();
   });
-
 });
