@@ -266,15 +266,16 @@ function formatTime(t) {
   const s = Math.floor(t % 60);
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
-
-videoPlayer.addEventListener("loadedmetadata", () => {
-  durationLabel.textContent = formatTime(videoPlayer.duration);
-  timeline.max = videoPlayer.duration;
+  
+videoPlayer.addEventListener('loadedmetadata', () => {
+    duration.innerText = formatTime(videoPlayer.duration);
+    timeline.max = videoPlayer.duration;
 });
-
-videoPlayer.addEventListener("timeupdate", () => {
-  timeline.value = videoPlayer.currentTime;
-  currentTimeLabel.textContent = formatTime(videoPlayer.currentTime);
+  
+videoPlayer.addEventListener('timeupdate', () => {
+    const percent = (videoPlayer.currentTime / videoPlayer.duration) * 100;
+    timeline.style.setProperty('--progress', percent + '%');
+    currentTime.innerText = formatTime(videoPlayer.currentTime);
 });
 
 timeline.addEventListener("input", () => {
