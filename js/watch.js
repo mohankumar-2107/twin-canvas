@@ -1,11 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https://twin-canvas.onrender.com');
+  const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
   let movieStream;
-  let localStream;
+  let localStream;        // optional mic
   let isBroadcaster = false;
-  const peerConnections = {};
+  const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -27,40 +27,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.emit('join_movie_room', { room, userName });
 
+  // ✅ NEW listener — fix for reverse uploading
+  socket.on("movie-users", (ids) => {
+    ids.forEach(id => {
+      sendOffer(id); // send movie to the peers
+    });
+  });
+
   function playAllBlockedAudio() {
     audioContainer.querySelectorAll('audio').forEach(audio => {
-      audio.play().catch(()=>{});
+        audio.play().catch(() => {});
     });
   }
 
-  function showTapToPlay() {
-    let btn = document.getElementById("tapToPlayBtn");
-    if (btn) return; // already exists
-
-    btn = document.createElement("button");
-    btn.id = "tapToPlayBtn";
-    btn.innerText = "▶ Tap to Start Video";
-    btn.style = `
-      position: fixed;
-      bottom: 25px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 25px;
-      font-size: 18px;
-      background: #6c5ce7;
-      border: none;
-      border-radius: 8px;
-      color: white;
-      cursor: pointer;
-      z-index: 9999;
-    `;
-    document.body.appendChild(btn);
-
-    btn.onclick = () => {
-      videoPlayer.play().catch(()=>{});
-      playAllBlockedAudio();
-      btn.remove();
-    };
+  function nameToColor(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = hash % 360;
+    return `hsl(${hue}, 70%, 60%)`;
   }
 
   function getOrCreatePC(socketId) {
@@ -88,9 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream;
         videoPlayer.muted = false;
-
-        videoPlayer.play().catch(() => showTapToPlay());
-
+        videoPlayer.play().catch(() => {});
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
@@ -99,13 +83,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!audio) {
           audio = document.createElement("audio");
           audio.id = `audio-${socketId}`;
-          audio.autoplay = true;
+          audio.controls = false;
           audioContainer.appendChild(audio);
         }
         audio.srcObject = stream;
+        audio.play().catch(() => {});
       }
     };
-
     return pc;
   }
 
@@ -122,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ✅ When user selects video
+  // ✅ File upload fix for reverse broadcasting
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -130,29 +114,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     videoPlayer.src = URL.createObjectURL(file);
     videoPlayer.muted = false;
-    await videoPlayer.play().catch(()=>showTapToPlay());
+    await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
 
     playAllBlockedAudio();
+
     movieStream = videoPlayer.captureStream();
 
-    socket.emit('ready-for-voice', { room }); // ✅ ensure peers connect
+    // ✅ <<< IMPORTANT FIX >>>
+    if (Object.keys(peerConnections).length === 0) {
+      socket.emit("request_movie_users", { room });
+    } else {
+      for (const id of Object.keys(peerConnections)) {
+        const pc = getOrCreatePC(id);
 
-    for (const id of Object.keys(peerConnections)) {
-      const pc = getOrCreatePC(id);
-      const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+        const localAudioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+        pc.getSenders()
+          .filter(s => s.track && s.track.kind === 'video')
+          .forEach(s => pc.removeTrack(s));
 
-      pc.getSenders().filter(s => s.track?.kind === 'video').forEach(s => pc.removeTrack(s));
-      pc.getSenders().filter(s => s.track?.kind === 'audio' && s.track !== localAudioTrack)
-                     .forEach(s => pc.removeTrack(s));
+        pc.getSenders()
+          .filter(s => s.track && s.track.kind === 'audio' && s.track !== localAudioTrack)
+          .forEach(s => pc.removeTrack(s));
 
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+        movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+      }
+
+      await renegotiateAll();
     }
-
-    await renegotiateAll();
   });
 
-  // ✅ Playback sync
+  // ✅ Playback controls
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
       videoPlayer.play();
@@ -164,22 +156,31 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   skipBtn.addEventListener('click', () => {
-    const t = videoPlayer.currentTime + 10;
-    videoPlayer.currentTime = t;
-    socket.emit('video_seek', { room, time: t });
+    const newTime = videoPlayer.currentTime + 10;
+    videoPlayer.currentTime = newTime;
+    socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
-    const t = videoPlayer.currentTime - 10;
-    videoPlayer.currentTime = t;
-    socket.emit('video_seek', { room, time: t });
+    const newTime = videoPlayer.currentTime - 10;
+    videoPlayer.currentTime = newTime;
+    socket.emit('video_seek', { room, time: newTime });
   });
 
-  socket.on('video_play', () => videoPlayer.play().catch(()=>showTapToPlay()));
-  socket.on('video_pause', () => videoPlayer.pause());
-  socket.on('video_seek', t => videoPlayer.currentTime = t);
+  // ✅ Playback sync
+  socket.on('video_play', () => {
+    if (videoPlayer.paused) videoPlayer.play().catch(()=>{});
+  });
+  socket.on('video_pause', () => {
+    if (!videoPlayer.paused) videoPlayer.pause();
+  });
+  socket.on('video_seek', (time) => {
+    if (Math.abs(videoPlayer.currentTime - time) > 1) {
+      videoPlayer.currentTime = time;
+    }
+  });
 
-  // ✅ Mic button
+  // ✅ Mic logic
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -189,16 +190,16 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }});
         socket.emit('ready-for-voice', { room });
-        playAllBlockedAudio();
 
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
         await renegotiateAll();
+        playAllBlockedAudio();
 
       } catch (e) {
-        console.log("Mic blocked", e);
+        console.error("Mic blocked:", e);
         micOn = false;
       }
     }
@@ -206,15 +207,35 @@ document.addEventListener('DOMContentLoaded', () => {
     if (localStream) {
       localStream.getTracks().forEach(t => t.enabled = micOn);
     }
+
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ✅ Signaling
-  socket.on('existing-voice-users', ids => {
-    ids.forEach(id => { if (id !== socket.id) sendOffer(id); });
+  // ✅ Voice signaling + logos
+  socket.on('update_users', (userNames) => {
+    const initialsContainer = document.getElementById('userInitials');
+    initialsContainer.innerHTML = '';
+    userNames.forEach(name => {
+      const initial = name.charAt(0).toUpperCase();
+      const color = nameToColor(name);
+      const circle = document.createElement('div');
+      circle.className = 'initial-circle';
+      circle.textContent = initial;
+      circle.title = name;
+      circle.style.backgroundColor = color;
+      initialsContainer.appendChild(circle);
+    });
+  });
+
+  socket.on('existing-voice-users', (ids) => {
+    if (!localStream) return;
+    ids.forEach(id => {
+      if (id !== socket.id) sendOffer(id);
+    });
   });
 
   socket.on('user-joined-voice', ({ socketId }) => {
+    if (!localStream) return;
     if (socketId !== socket.id) sendOffer(socketId);
   });
 
@@ -236,10 +257,9 @@ document.addEventListener('DOMContentLoaded', () => {
     try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
   });
 
-  socket.on('user-left-voice', socketId => {
+  socket.on('user-left-voice', (socketId) => {
     peerConnections[socketId]?.close();
     delete peerConnections[socketId];
     document.getElementById(`audio-${socketId}`)?.remove();
   });
-
 });
