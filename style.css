@@ -805,5 +805,55 @@ body.movie-theme {
     border: 2px solid white;
     cursor: pointer;
 }
+#timeline {
+    flex: 1;
+    appearance: none;
+    height: 6px;
+    background: #444;          /* ✅ Dark visible track */
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+}
+
+/* Hover effect */
+#timeline:hover {
+    height: 8px;
+}
+
+/* ✅ Progress bar color (Chrome / Edge / Safari) */
+#timeline::-webkit-slider-runnable-track {
+    height: 6px;
+    background: linear-gradient(to right, #1e90ff var(--progress), #444 var(--progress));
+    border-radius: 4px;
+}
+
+/* ✅ Knob / Thumb */
+#timeline::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #1e90ff;
+    border: 2px solid white;
+    border-radius: 50%;
+    cursor: pointer;
+    margin-top: -4px;   /* centers the thumb */
+}
+
+/* ✅ Firefox */
+#timeline::-moz-range-track {
+    background: #444;
+    height: 6px;
+    border-radius: 4px;
+}
+#timeline::-moz-range-progress {
+    background: #1e90ff;
+    height: 6px;
+    border-radius: 4px;
+}
+#timeline::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #1e90ff;
+    border:
 
 
