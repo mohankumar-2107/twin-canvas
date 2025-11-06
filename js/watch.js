@@ -2,10 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const socket = io('https://twin-canvas.onrender.com'); // your signaling server
 
-  // We are NOT streaming. Both users must select a file.
-  // const movieStream; <-- REMOVED
-  // let isBroadcaster = false; <-- REMOVED
-
+  // We are NOT streaming. This is a Sync Player.
   let localStream;        // optional mic
   const peerConnections = {}; 
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -38,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Join the room
   socket.emit('join_movie_room', { room, userName });
   
+  // --- LOGO LOGIC (from draw.js) ---
   function nameToColor(name) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
@@ -47,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return `hsl(${hue}, 70%, 60%)`;
   }
   
+  // --- MIC LOGIC (from draw.js) ---
   function playAllBlockedAudio() {
     audioContainer.querySelectorAll('audio').forEach(audio => {
         audio.play().catch(e => console.warn("Audio play blocked", e));
@@ -64,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   }
 
-  // --- This is the working WebRTC Logic from draw.js ---
+  // --- MIC LOGIC (from draw.js) ---
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
@@ -94,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     return pc;
   }
-  // --- End of working WebRTC Logic ---
+  // --- End of Mic WebRTC Logic ---
 
 
   // --- File Select Logic (Sync Player) ---
@@ -141,6 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Timeline & Double-tap Logic ---
   function formatTime(seconds) {
+      if (isNaN(seconds)) return "0:00";
       const min = Math.floor(seconds / 60);
       const sec = Math.floor(seconds % 60);
       return `${min}:${sec < 10 ? '0' : ''}${sec}`;
