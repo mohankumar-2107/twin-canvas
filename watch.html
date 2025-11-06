@@ -1,36 +1,42 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Movie Party</title>
-  <link rel="stylesheet" href="watch.css">
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Room - TwinCanvas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="/style.css?v=2">
 </head>
-<body>
+<body class="movie-theme">
+    <div id="userInitials" class="user-initials-container"></div>
+    
+    <div class="video-container" id="videoContainer">
+        <video id="moviePlayer"></video>
 
-<div id="userInitials"></div>
+        <div id="filePrompt" class="file-prompt">
+            <i class="fas fa-upload"></i>
+            <h3>Choose your movie file</h3>
+            <p>Both users must select the same file from their computer.</p>
+            <input type="file" id="fileInput" accept="video/*">
+        </div>
 
-<video id="moviePlayer" autoplay playsinline></video>
+        <div class="timeline-container" id="timelineContainer">
+            <span id="currentTime">00:00</span>
+            <input type="range" id="timeline" value="0" step="0.1">
+            <span id="duration">00:00</span>
+        </div>
 
-<div id="filePrompt">
-  <div class="upload-box">
-    <i class="fa-solid fa-upload upload-icon"></i>
-    <p>Choose a movie file to watch together</p>
-    <button id="customUploadBtn">Select Movie</button>
-    <input type="file" id="fileInput" accept="video/*" hidden>
-    <small>Both users must select the same local file</small>
-  </div>
-</div>
+        <div class="video-controls">
+            <button id="reverseBtn" title="Back 10s"><i class="fas fa-backward"></i></button>
+            <button id="playPauseBtn" title="Play/Pause"><i class="fas fa-play"></i></button>
+            <button id="skipBtn" title="Forward 10s"><i class="fas fa-forward"></i></button>
+            <button id="micBtn" class="tool" title="Toggle Mic"><i class="fas fa-microphone-slash"></i></button>
+        </div>
+    </div>
+    
+    <div id="audio-container"></div>
 
-<div id="controls">
-  <button id="reverseBtn"><i class="fas fa-backward"></i></button>
-  <button id="playPauseBtn"><i class="fas fa-play"></i></button>
-  <button id="skipBtn"><i class="fas fa-forward"></i></button>
-</div>
-
-<div id="audio-container"></div>
-
-<script src="watch.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script src="/js/watch.js?v=2"></script> <!-- Force reload -->
 </body>
 </html>
