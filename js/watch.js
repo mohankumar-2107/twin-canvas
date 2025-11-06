@@ -1,162 +1,131 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener("DOMContentLoaded", () => {
 
-  const socket = io('https://twin-canvas.onrender.com');
+  const socket = io("https://twin-canvas.onrender.com");
 
   const urlParams = new URLSearchParams(window.location.search);
-  const room = urlParams.get('room');
-  const userName = localStorage.getItem('twinCanvasUserName') || 'Anonymous';
+  const room = urlParams.get("room");
+  const userName = localStorage.getItem("twinCanvasUserName") || "Anonymous";
 
-  if (!room) {
-    window.location.href = 'index.html';
-    return;
+  const videoPlayer = document.getElementById("moviePlayer");
+  const fileInput   = document.getElementById("fileInput");
+  const playBtn     = document.getElementById("playPauseBtn");
+  const skipBtn     = document.getElementById("skipBtn");
+  const backBtn     = document.getElementById("reverseBtn");
+
+  const audioContainer = document.getElementById("audio-container");
+
+  const peerConnections = {};
+  let movieStream;
+  let localStream;
+  let isBroadcaster = false;
+
+  const config = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  };
+
+  if (!room) { window.location.href = "index.html"; return; }
+
+  socket.emit("join_movie_room", { room, userName });
+
+  socket.on("movie-users", ids => {
+    ids.forEach(id => createAndSendOffer(id));
+  });
+
+  function createPeer(id) {
+    const pc = new RTCPeerConnection(config);
+    peerConnections[id] = pc;
+
+    if (movieStream) {
+      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+    }
+
+    pc.ontrack = ({ streams }) => {
+      videoPlayer.srcObject = streams[0];
+      videoPlayer.muted = false;
+      videoPlayer.play().catch(()=>{});
+    };
+
+    pc.onicecandidate = e => {
+      if (e.candidate)
+        socket.emit("movie-ice", { room, to: id, candidate: e.candidate });
+    };
+
+    return pc;
   }
 
-  // JOIN ROOM
-  socket.emit('join_movie_room', { room, userName });
+  async function createAndSendOffer(id) {
+    const pc = createPeer(id);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("movie-offer", { room, to: id, offer });
+  }
 
-  const videoPlayer = document.getElementById('moviePlayer');
-  const filePrompt = document.getElementById('filePrompt');
-  const customUploadBtn = document.getElementById('customUploadBtn');
-  const fileInput = document.getElementById('fileInput');
+  socket.on("movie-offer", async ({ from, offer }) => {
+    const pc = peerConnections[from] || createPeer(from);
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit("movie-answer", { room, to: from, answer });
+  });
 
-  const playPauseBtn = document.getElementById('playPauseBtn');
-  const skipBtn = document.getElementById('skipBtn');
-  const reverseBtn = document.getElementById('reverseBtn');
-  const micBtn = document.getElementById('micBtn');
+  socket.on("movie-answer", async ({ from, answer }) => {
+    const pc = peerConnections[from];
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  });
 
-  const timeline = document.getElementById('timeline');
-  const currentTimeElem = document.getElementById('currentTime');
-  const durationElem = document.getElementById('duration');
-  const timelineContainer = document.getElementById('timelineContainer');
-  const videoContainer = document.getElementById('videoContainer');
+  socket.on("movie-ice", async ({ from, candidate }) => {
+    const pc = peerConnections[from];
+    pc?.addIceCandidate(new RTCIceCandidate(candidate));
+  });
 
-  let timelineVisible = false;
-  let timelineTimeout;
-
-  // ✅ OPEN FILE PICKER
-  customUploadBtn.addEventListener('click', () => fileInput.click());
-
-  // ✅ WHEN USER SELECTS MOVIE FILE
-  fileInput.addEventListener('change', () => {
+  // ✅ Select file & stream it
+  fileInput.addEventListener("change", async () => {
     const file = fileInput.files[0];
     if (!file) return;
 
+    isBroadcaster = true;
     videoPlayer.src = URL.createObjectURL(file);
-    filePrompt.style.display = 'none';
-  });
+    await videoPlayer.play().catch(()=>{});
 
-  // ✅ CONTROL BUTTONS
-  playPauseBtn.addEventListener('click', () => {
-    if (videoPlayer.paused) {
-      socket.emit('video_play', { room });
-    } else {
-      socket.emit('video_pause', { room });
+    movieStream = videoPlayer.captureStream();
+
+    // renegotiate with all
+    for (const id of Object.keys(peerConnections)) {
+      const pc = peerConnections[id];
+      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("movie-offer", { room, to: id, offer });
     }
   });
 
-  reverseBtn.addEventListener('click', () => {
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime - 10 });
+  // ✅ Play/Pause Sync
+  playBtn.addEventListener("click", () => {
+    if (videoPlayer.paused) {
+      videoPlayer.play();
+      socket.emit("movie_play", { room });
+    } else {
+      videoPlayer.pause();
+      socket.emit("movie_pause", { room });
+    }
   });
 
-  skipBtn.addEventListener('click', () => {
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime + 10 });
+  socket.on("movie_play", () => videoPlayer.play().catch(()=>{}));
+  socket.on("movie_pause", () => videoPlayer.pause());
+
+  // ✅ Seeking
+  skipBtn.addEventListener("click", () => {
+    videoPlayer.currentTime += 10;
+    socket.emit("movie_seek", { room, time: videoPlayer.currentTime });
   });
 
-  // ✅ UPDATE UI WHEN SERVER TELLS
-  socket.on('video_play', () => {
-    videoPlayer.play().catch(()=>{});
-    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+  backBtn.addEventListener("click", () => {
+    videoPlayer.currentTime -= 10;
+    socket.emit("movie_seek", { room, time: videoPlayer.currentTime });
   });
 
-  socket.on('video_pause', () => {
-    videoPlayer.pause();
-    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
-  });
-
-  socket.on('video_seek', (time) => {
+  socket.on("movie_seek", (time) => {
     videoPlayer.currentTime = time;
   });
 
-  // ✅ TIMELINE DISPLAY
-  function formatTime(sec) {
-    if (isNaN(sec)) return "0:00";
-    const m = Math.floor(sec/60);
-    const s = Math.floor(sec%60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  }
-
-  videoPlayer.addEventListener('loadedmetadata', () => {
-    timeline.max = videoPlayer.duration;
-    durationElem.textContent = formatTime(videoPlayer.duration);
-  });
-
-  videoPlayer.addEventListener('timeupdate', () => {
-    timeline.value = videoPlayer.currentTime;
-    currentTimeElem.textContent = formatTime(videoPlayer.currentTime);
-  });
-
-  timeline.addEventListener('input', () => {
-    socket.emit('video_seek', { room, time: timeline.value });
-  });
-
-  // Show timeline when double click
-  videoContainer.addEventListener('dblclick', () => {
-    timelineVisible = true;
-    timelineContainer.style.opacity = '1';
-    clearTimeout(timelineTimeout);
-    timelineTimeout = setTimeout(() => {
-      timelineVisible = false;
-      timelineContainer.style.opacity = '0';
-    }, 3000);
-  });
-
-  // ✅ MIC LOGIC (same as draw page)
-  const audioContainer = document.getElementById('audio-container');
-  let localStream;
-  let isMuted = true;
-
-  micBtn.addEventListener('click', async () => {
-    isMuted = !isMuted;
-
-    const icon = micBtn.querySelector('i');
-
-    if (!localStream && !isMuted) {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true }
-        });
-        socket.emit('ready-for-voice', { room });
-      } catch (e) {
-        isMuted = true;
-        return;
-      }
-    }
-
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.enabled = !isMuted);
-    }
-
-    icon.className = isMuted ? 'fas fa-microphone-slash' : 'fas fa-microphone';
-  });
-
-  // ✅ LOGO SYSTEM
-  function nameToColor(name) {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return `hsl(${hash % 360}, 70%, 60%)`;
-  }
-
-  socket.on('update_users', (userNames) => {
-    const initialsContainer = document.getElementById('userInitials');
-    initialsContainer.innerHTML = '';
-    userNames.forEach(name => {
-      const div = document.createElement('div');
-      div.className = 'initial-circle';
-      div.style.backgroundColor = nameToColor(name);
-      div.textContent = name[0].toUpperCase();
-      initialsContainer.appendChild(div);
-    });
-  });
 });
