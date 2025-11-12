@@ -192,56 +192,69 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Timeline Logic (YouTube Style) ---
-  function formatTime(t) {
-    if (!t || isNaN(t)) return "00:00";
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+ // ---------------- Timeline logic (fixed alignment + viewer lock) ----------------
+
+// helper to format mm:ss
+function formatTime(t) {
+  if (!t || isNaN(t)) return "00:00";
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+}
+
+// update both the range and labels
+function updateTimelineUI(time) {
+  if (!timeline) return;
+  timeline.value = time;
+  const percent = (videoPlayer.duration) ? (time / videoPlayer.duration) * 100 : 0;
+  timeline.style.setProperty('--progress', `${percent}%`);
+  if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
+}
+
+videoPlayer.addEventListener('loadedmetadata', () => {
+  const dur = videoPlayer.duration;
+  if (isFinite(dur)) {
+    durationLabel.textContent = formatTime(dur);
+    timeline.max = dur;
+    timeline.step = 0.1;
+  } else {
+    durationLabel.textContent = "00:00";
   }
 
-  function updateTimelineUI(time) {
-    if (!timeline) return;
-    timeline.value = time;
-    const percent = videoPlayer.duration ? (time / videoPlayer.duration) * 100 : 0;
-    timeline.style.setProperty('--progress', `${percent}%`);
-    if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
-  }
+  // ✅ viewer lock: disable seeking if not broadcaster
+  if (!isBroadcaster) timeline.disabled = true;
+});
 
-  videoPlayer.addEventListener('loadedmetadata', () => {
-    if (durationLabel) durationLabel.textContent = formatTime(videoPlayer.duration);
-    if (timeline) {
-      timeline.max = videoPlayer.duration;
-      timeline.step = 0.1;
-    }
+videoPlayer.addEventListener('timeupdate', () => {
+  updateTimelineUI(videoPlayer.currentTime);
+});
+
+// ✅ Allow seeking only for broadcaster
+if (timeline) {
+  timeline.addEventListener('input', (e) => {
+    if (!isBroadcaster) return; // prevent viewer scrubbing
+    const t = parseFloat(e.target.value);
+    updateTimelineUI(t);
   });
-
-  videoPlayer.addEventListener('timeupdate', () => {
-    updateTimelineUI(videoPlayer.currentTime);
+  timeline.addEventListener('change', (e) => {
+    if (!isBroadcaster) return;
+    const t = parseFloat(e.target.value);
+    videoPlayer.currentTime = t;
+    socket.emit('video_seek', { room, time: t });
   });
+}
 
-  if (timeline) {
-    timeline.addEventListener('input', (e) => {
-      const t = parseFloat(e.target.value);
-      updateTimelineUI(t);
-    });
-    timeline.addEventListener('change', (e) => {
-      const t = parseFloat(e.target.value);
-      videoPlayer.currentTime = t;
-      socket.emit('video_seek', { room, time: t });
-    });
-  }
-
-  // --- YouTube-style fade in/out on mouse move ---
-  function showTimeline() {
-    if (!timelineContainer) return;
-    timelineContainer.style.opacity = '1';
-    clearTimeout(hideTimelineTimeout);
-    hideTimelineTimeout = setTimeout(() => {
-      timelineContainer.style.opacity = '0';
-    }, 2500);
-  }
-  videoContainer.addEventListener('mousemove', showTimeline);
-  videoContainer.addEventListener('click', showTimeline);
+// ✅ Show/hide timeline like YouTube
+function showTimeline() {
+  if (!timelineContainer) return;
+  timelineContainer.style.opacity = '1';
+  clearTimeout(hideTimelineTimeout);
+  hideTimelineTimeout = setTimeout(() => {
+    timelineContainer.style.opacity = '0';
+  }, 2500);
+}
+videoContainer.addEventListener('mousemove', showTimeline);
+videoContainer.addEventListener('click', showTimeline);
 
   // --- Mic Logic (unchanged) ---
   let micOn = false;
