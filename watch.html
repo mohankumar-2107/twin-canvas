@@ -10,30 +10,30 @@
 <body class="movie-theme">
     <div id="userInitials" class="user-initials-container"></div>
     
-    <!-- ID ADDED HERE for double-tap -->
     <div class="video-container" id="videoContainer"> 
         <video id="moviePlayer"></video>
 
         <div id="filePrompt" class="file-prompt">
             <i class="fas fa-upload"></i>
             <h3>Choose your movie file</h3>
-            <!-- This text is updated to match the streaming logic -->
             <p>Only one person needs to choose a file to stream.</p> 
             <input type="file" id="fileInput" accept="video/*">
         </div>
 
-        <!-- NEW: Timeline / Scrubber Bar -->
         <div class="timeline-container" id="timelineContainer">
+            
+            <div class="video-controls">
+                <button id="reverseBtn" title="Back 10s"><i class="fas fa-backward"></i></button>
+                <button id="playPauseBtn" title="Play/Pause"><i class="fas fa-play"></i></button>
+                <button id="skipBtn" title="Forward 10s"><i class="fas fa-forward"></i></button>
+                <button id="micBtn" class="tool" title="Toggle Mic"><i class="fas fa-microphone-slash"></i></button>
+            </div>
+
             <span id="currentTime">00:00</span>
             <input type="range" id="timeline" value="0" step="0.1">
             <span id="duration">00:00</span>
-        </div>
 
-        <div class="video-controls">
-            <button id="reverseBtn" title="Back 10s"><i class="fas fa-backward"></i></button>
-            <button id="playPauseBtn" title="Play/Pause"><i class="fas fa-play"></i></button>
-            <button id="skipBtn" title="Forward 10s"><i class="fas fa-forward"></i></button>
-            <button id="micBtn" class="tool" title="Toggle Mic"><i class="fas fa-microphone-slash"></i></button>
+            <button id="fullscreenBtn" title="Toggle Fullscreen"><i class="fas fa-expand"></i></button>
         </div>
     </div>
     
