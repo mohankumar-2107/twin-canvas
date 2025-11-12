@@ -280,38 +280,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- Floating timeline appearance (double-tap & mousemove) ----------------
 
+   // ---------------- Floating timeline: show only in fullscreen ----------------
+
+  const videoContainer = document.getElementById('videoContainer');
+  const timelineContainer = document.getElementById('timelineContainer');
   let floatingTimer = null;
+
+  // helper: detect if fullscreen
+  function isFullscreen() {
+    return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+  }
+
   function showFloatingTimeline() {
-    if (!timelineContainer) return;
+    if (!timelineContainer || !isFullscreen()) return; // only in fullscreen
     timelineContainer.classList.add('visible');
     clearTimeout(floatingTimer);
     floatingTimer = setTimeout(() => {
       timelineContainer.classList.remove('visible');
-    }, 3500);
+    }, 4000); // hide after 4s
   }
 
-  // double-click / double-tap to toggle visible
-  videoContainer?.addEventListener('dblclick', () => {
-    if (!timelineContainer) return;
-    if (timelineContainer.classList.contains('visible')) {
-      timelineContainer.classList.remove('visible');
-      clearTimeout(floatingTimer);
-    } else {
-      showFloatingTimeline();
+  // hide instantly when exiting fullscreen
+  document.addEventListener('fullscreenchange', () => {
+    if (!isFullscreen()) {
+      timelineContainer?.classList.remove('visible');
     }
   });
 
-  // show controls briefly on pointer move (desktop) or touchstart (mobile)
-  videoContainer?.addEventListener('mousemove', () => { showFloatingTimeline(); });
-  videoContainer?.addEventListener('touchstart', () => { showFloatingTimeline(); });
+  // show timeline triggers
+  videoPlayer.addEventListener('pause', showFloatingTimeline);
+  videoPlayer.addEventListener('seeked', showFloatingTimeline);
+  videoContainer?.addEventListener('mousemove', showFloatingTimeline);
+  videoContainer?.addEventListener('touchstart', showFloatingTimeline);
+  videoContainer?.addEventListener('dblclick', showFloatingTimeline);
 
-  // show on pause
-  videoPlayer.addEventListener('pause', () => { if (timelineContainer) timelineContainer.classList.add('visible'); });
-  // hide shortly after play
-  videoPlayer.addEventListener('play', () => { if (timelineContainer) {
+  // hide shortly after play resumes
+  videoPlayer.addEventListener('play', () => {
     clearTimeout(floatingTimer);
-    floatingTimer = setTimeout(()=> timelineContainer.classList.remove('visible'), 1800);
-  } });
+    if (isFullscreen()) {
+      floatingTimer = setTimeout(() => {
+        timelineContainer.classList.remove('visible');
+      }, 2000);
+    }
+  });
 
   // ---------------- Mic logic (unchanged) ----------------
   let micOn = false;
