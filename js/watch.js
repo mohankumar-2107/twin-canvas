@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let movieStream;
   let localStream;
-  let isBroadcaster = false; // ✅ This is now critical
+  let isBroadcaster = false; // ✅ This is critical
   const peerConnections = {};
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -155,74 +155,47 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   playPauseBtn.addEventListener('click', () => {
+    // ✅ EVERYONE just emits the event
     if (videoPlayer.paused) {
       socket.emit('video_play', { room });
-      // ✅ Only broadcaster controls their player directly
-      if (isBroadcaster) { 
-        videoPlayer.play().catch(()=>{});
-        setPlayIcon(true);
-      }
     } else {
       socket.emit('video_pause', { room });
-      // ✅ Only broadcaster controls their player directly
-      if (isBroadcaster) {
-        videoPlayer.pause();
-        setPlayIcon(false);
-      }
     }
   });
 
   skipBtn.addEventListener('click', () => {
-    // ✅ Read time from the UI, not the video player
     const maxDur = parseFloat(timeline.max) || Infinity;
     const current = parseFloat(timeline.value) || 0;
     const newTime = Math.min(current + 10, maxDur);
-
-    // ✅ Only broadcaster controls their player directly
-    if (isBroadcaster) {
-      videoPlayer.currentTime = newTime;
-    }
-    // Everyone emits the event and optimistically updates UI
+    // ✅ EVERYONE just emits the event
     socket.emit('video_seek', { room, time: newTime });
-    updateTimelineUI(newTime);
   });
 
   reverseBtn.addEventListener('click', () => {
-    // ✅ Read time from the UI, not the video player
     const current = parseFloat(timeline.value) || 0;
     const newTime = Math.max(current - 10, 0);
-
-    // ✅ Only broadcaster controls their player directly
-    if (isBroadcaster) {
-      videoPlayer.currentTime = newTime;
-    }
-    // Everyone emits the event and optimistically updates UI
+    // ✅ EVERYONE just emits the event
     socket.emit('video_seek', { room, time: newTime });
-    updateTimelineUI(newTime);
   });
 
-  // These events are now received by EVERYONE ELSE
+  // --- Receiving Sync Events ---
+  
   socket.on('video_play', () => {
-    if (videoPlayer.paused) {
-      videoPlayer.play().catch(()=>{});
-      setPlayIcon(true);
-    }
+    videoPlayer.play().catch(()=>{});
+    setPlayIcon(true);
   });
+  
   socket.on('video_pause', () => {
-    if (!videoPlayer.paused) {
-      videoPlayer.pause();
-      setPlayIcon(false);
-    }
+    videoPlayer.pause();
+    setPlayIcon(false);
   });
+  
   socket.on('video_seek', (time) => {
-    // ✅ Broadcaster updates its own time if it's out of sync
+    // ✅ ONLY broadcaster actually changes the video time
     if (isBroadcaster) {
-      const localTime = videoPlayer.currentTime || 0;
-      if (Math.abs(localTime - time) > 0.4) {
-        videoPlayer.currentTime = time;
-      }
+      videoPlayer.currentTime = time;
     }
-    // ✅ EVERYONE updates their UI from the socket event
+    // Everyone updates their UI
     updateTimelineUI(time);
   });
 
@@ -255,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
         timeline.step = 0.1;
         timeline.disabled = false;
       }
-      // ✅ ------ NEW: TELL EVERYONE THE DURATION ------
+      // ✅ ------ TELL EVERYONE THE DURATION ------
       socket.emit('video_duration', { room, duration: duration });
       
       timelineContainer.classList.add('visible');
@@ -280,11 +253,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let isUserSeeking = false;
   videoPlayer.addEventListener('timeupdate', () => {
-    // ✅ ONLY the broadcaster updates UI from its own 'timeupdate'
+    // ✅ ONLY the broadcaster sends time updates
     if (isBroadcaster && !isUserSeeking) {
-      updateTimelineUI(videoPlayer.currentTime || 0);
+      const time = videoPlayer.currentTime || 0;
+      updateTimelineUI(time);
+      // ✅ ------ SEND CURRENT TIME TO EVERYONE ------
+      socket.emit('video_timeupdate', { room, time: time });
     }
   });
+
+  // ✅ ------ NEW: RECEIVER LISTENS FOR TIME UPDATES ------
+  socket.on('video_timeupdate', (time) => {
+    if (isBroadcaster || isUserSeeking) return; // Ignore if we are sender or seeking
+    updateTimelineUI(time);
+  });
+
 
   if (timeline) {
     timeline.addEventListener('pointerdown', () => { isUserSeeking = true; });
@@ -298,12 +281,15 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const finishSeek = (e) => {
       const v = parseFloat(e.target.value || 0);
-      // ✅ Only broadcaster controls their player directly
-      if (isBroadcaster) {
-        videoPlayer.currentTime = v;
-      }
-      updateTimelineUI(v);
+      // ✅ EVERYONE just emits the seek event
       socket.emit('video_seek', { room, time: v });
+      
+      // Update UI locally *only if* broadcaster
+      if(isBroadcaster) {
+        videoPlayer.currentTime = v;
+        updateTimelineUI(v);
+      }
+      
       setTimeout(() => { isUserSeeking = false; }, 150);
     };
     timeline.addEventListener('change', finishSeek);
@@ -401,8 +387,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const pc = getOrCreatePC(from);
 
     // ✅ ------ FIX for InvalidStateError ------
-    // If the state is 'stable', we aren't expecting an answer.
-    // This is a stray answer from a previous negotiation.
     if (pc.signalingState === 'stable') {
       console.warn(`Ignoring 'voice-answer' from ${from}, state is 'stable'.`);
       return;
