@@ -941,28 +941,27 @@ body.movie-theme {
   background: #fff;
   cursor: pointer;
 }
-/* === Floating full-width timeline bar === */
+/* === Floating Full-Width Timeline Bar (VLC / YouTube style) === */
 .timeline-container {
   position: absolute;
-  bottom: -60px;                /* start hidden below frame */
+  bottom: 0;
   left: 0;
   width: 100%;
   padding: 10px 40px;
   box-sizing: border-box;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   gap: 12px;
   opacity: 0;
   transform: translateY(100%);
   transition: all 0.4s ease;
-  z-index: 30;
+  z-index: 100;
 }
 
 .timeline-container.visible {
   opacity: 1;
   transform: translateY(0);
-  bottom: 0;
 }
 
 .timeline-container span {
@@ -977,7 +976,11 @@ body.movie-theme {
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
-  background: linear-gradient(to right, #1e90ff var(--progress, 0%), #444 var(--progress, 0%));
+  background: linear-gradient(
+    to right,
+    #1e90ff var(--progress, 0%),
+    #555 var(--progress, 0%)
+  );
   border-radius: 4px;
   outline: none;
   cursor: pointer;
@@ -987,13 +990,8 @@ body.movie-theme {
   -webkit-appearance: none;
   width: 14px;
   height: 14px;
-  background: #fff;
   border-radius: 50%;
+  background: white;
   cursor: pointer;
   margin-top: -4px;
-}
-
-#timeline:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
