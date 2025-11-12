@@ -141,26 +141,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  playPauseBtn.addEventListener('click', () => {
-    if (videoPlayer.paused) {
-      videoPlayer.play();
-      socket.emit('video_play', { room });
-    } else {
-      videoPlayer.pause();
-      socket.emit('video_pause', { room });
-    }
-  });
+  // === PLAY/PAUSE ===
+playPauseBtn.addEventListener('click', () => {
+  if (videoPlayer.paused) {
+    socket.emit('video_play', { room });   // broadcast first
+    videoPlayer.play();
+  } else {
+    socket.emit('video_pause', { room });
+    videoPlayer.pause();
+  }
+});
 
-  skipBtn.addEventListener('click', () => {
-    videoPlayer.currentTime += 10;
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
-  });
+// === FORWARD 10s ===
+skipBtn.addEventListener('click', () => {
+  const newTime = Math.min(videoPlayer.currentTime + 10, videoPlayer.duration);
+  videoPlayer.currentTime = newTime;
+  socket.emit('video_seek', { room, time: newTime });   // send to others
+});
 
-  reverseBtn.addEventListener('click', () => {
-    videoPlayer.currentTime -= 10;
-    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
-  });
-
+// === BACKWARD 10s ===
+reverseBtn.addEventListener('click', () => {
+  const newTime = Math.max(videoPlayer.currentTime - 10, 0);
+  videoPlayer.currentTime = newTime;
+  socket.emit('video_seek', { room, time: newTime });
+});
+  
   socket.on('video_play', () => videoPlayer.play().catch(() => {}));
   socket.on('video_pause', () => videoPlayer.pause());
 
