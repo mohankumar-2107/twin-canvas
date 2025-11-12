@@ -1,6 +1,7 @@
+// watch.js — full updated file
 document.addEventListener('DOMContentLoaded', () => {
 
-  const socket = io('https://twin-canvas.onrender.com'); // ✅ fixed typo (https://)
+  const socket = io('https://twin-canvas.onrender.com');
 
   let movieStream;
   let localStream;
@@ -19,45 +20,38 @@ document.addEventListener('DOMContentLoaded', () => {
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
-
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
-  // --- YouTube-style timeline elements ---
+  // --- timeline elements ---
   const videoContainer = document.getElementById('videoContainer');
-  const timelineContainer = document.getElementById('timelineContainer');
   const timeline = document.getElementById('timeline');
-  const currentTimeElem = document.getElementById('currentTime');
-  const durationElem = document.getElementById('duration');
+  const currentTimeLabel = document.getElementById('currentTime');
+  const durationLabel = document.getElementById('duration');
+  const timelineContainer = document.getElementById('timelineContainer');
 
-  let hideTimeout;
+  let hideTimelineTimeout;
 
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
 
-  // --- Utility functions ---
+  socket.on("movie-users", (ids) => {
+    ids.forEach(id => sendOffer(id));
+  });
+
   function nameToColor(name) {
+    if (!name) return '#888';
     let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const hue = hash % 360;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = Math.abs(hash) % 360;
     return `hsl(${hue}, 70%, 60%)`;
   }
 
   function playAllBlockedAudio() {
-    audioContainer.querySelectorAll('audio').forEach(a => a.play().catch(() => {}));
+    audioContainer.querySelectorAll('audio').forEach(a => a.play().catch(()=>{}));
   }
 
-  function openFullscreen() {
-    const elem = document.documentElement;
-    if (elem.requestFullscreen) elem.requestFullscreen();
-    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
-    else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
-  }
-
-  // --- PeerConnection management ---
   function getOrCreatePC(socketId) {
     let pc = peerConnections[socketId];
     if (pc) return pc;
@@ -68,27 +62,33 @@ document.addEventListener('DOMContentLoaded', () => {
     if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     if (isBroadcaster && movieStream) movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
 
-    pc.onicecandidate = e => {
+    pc.onicecandidate = (e) => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
 
-    pc.ontrack = event => {
+    pc.ontrack = (event) => {
       const stream = event.streams[0];
+      if (!stream) return;
+
       if (stream.getVideoTracks().length > 0) {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream;
         videoPlayer.muted = false;
-        videoPlayer.play().catch(() => {});
+        videoPlayer.play().catch(()=>{});
+        playPauseBtn.disabled = false;
+        skipBtn.disabled = false;
+        reverseBtn.disabled = false;
       } else {
         let audio = document.getElementById(`audio-${socketId}`);
         if (!audio) {
           audio = document.createElement('audio');
           audio.id = `audio-${socketId}`;
+          audio.autoplay = true;
           audio.controls = false;
           audioContainer.appendChild(audio);
         }
         audio.srcObject = stream;
-        audio.play().catch(() => {});
+        audio.play().catch(()=>{});
       }
     };
 
@@ -97,9 +97,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function sendOffer(to) {
     const pc = getOrCreatePC(to);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('voice-offer', { room, to, offer: pc.localDescription });
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('voice-offer', { room, to, offer: pc.localDescription });
+    } catch (e) {
+      console.warn("sendOffer error", e);
+    }
   }
 
   async function renegotiateAll() {
@@ -108,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- File upload logic (broadcaster only) ---
+  // --- File Upload Logic ---
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -116,84 +120,130 @@ document.addEventListener('DOMContentLoaded', () => {
 
     videoPlayer.src = URL.createObjectURL(file);
     videoPlayer.muted = false;
-
-    await videoPlayer.play().catch(() => {});
+    await videoPlayer.play().catch(()=>{});
     filePrompt.style.display = 'none';
     playAllBlockedAudio();
 
-    movieStream = videoPlayer.captureStream();
+    movieStream = (videoPlayer.captureStream && videoPlayer.captureStream()) || 
+                  (videoPlayer.mozCaptureStream && videoPlayer.mozCaptureStream());
     if (!movieStream) {
-      alert("Your browser does not support streaming this video.");
+      alert("Your browser does not support captureStream().");
       return;
     }
 
-    for (const id of Object.keys(peerConnections)) {
-      const pc = getOrCreatePC(id);
-      pc.getSenders()
-        .filter(s => s.track && s.track.kind === 'video')
-        .forEach(s => pc.removeTrack(s));
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+    if (Object.keys(peerConnections).length === 0) {
+      socket.emit("request_movie_users", { room });
+    } else {
+      for (const id of Object.keys(peerConnections)) {
+        const pc = getOrCreatePC(id);
+        pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
+        movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
+      }
+      await renegotiateAll();
     }
-    await renegotiateAll();
   });
 
-  // --- Playback sync ---
+  // --- Sync Controls ---
+  function setPlayIcon(isPlaying) {
+    playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+  }
+
   playPauseBtn.addEventListener('click', () => {
-    if (videoPlayer.paused) socket.emit('video_play', { room });
-    else socket.emit('video_pause', { room });
+    if (videoPlayer.paused) {
+      socket.emit('video_play', { room });
+      videoPlayer.play().catch(()=>{});
+      setPlayIcon(true);
+    } else {
+      socket.emit('video_pause', { room });
+      videoPlayer.pause();
+      setPlayIcon(false);
+    }
   });
 
   skipBtn.addEventListener('click', () => {
-    const newTime = Math.min(videoPlayer.currentTime + 10, videoPlayer.duration);
+    const newTime = Math.min(videoPlayer.currentTime + 10, videoPlayer.duration || Infinity);
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
+    updateTimelineUI(newTime);
   });
 
   reverseBtn.addEventListener('click', () => {
     const newTime = Math.max(videoPlayer.currentTime - 10, 0);
+    videoPlayer.currentTime = newTime;
     socket.emit('video_seek', { room, time: newTime });
+    updateTimelineUI(newTime);
   });
 
-  socket.on('video_play', () => videoPlayer.play().catch(() => {}));
-  socket.on('video_pause', () => videoPlayer.pause());
-  socket.on('video_seek', (time) => videoPlayer.currentTime = time);
+  socket.on('video_play', () => {
+    if (videoPlayer.paused) {
+      videoPlayer.play().catch(()=>{});
+      setPlayIcon(true);
+    }
+  });
+  socket.on('video_pause', () => {
+    if (!videoPlayer.paused) {
+      videoPlayer.pause();
+      setPlayIcon(false);
+    }
+  });
+  socket.on('video_seek', (time) => {
+    if (Math.abs(videoPlayer.currentTime - time) > 0.5) videoPlayer.currentTime = time;
+    updateTimelineUI(time);
+  });
 
-  // --- Timeline Logic (YouTube style) ---
+  // --- Timeline Logic (YouTube Style) ---
   function formatTime(t) {
+    if (!t || isNaN(t)) return "00:00";
     const m = Math.floor(t / 60);
     const s = Math.floor(t % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  }
+
+  function updateTimelineUI(time) {
+    if (!timeline) return;
+    timeline.value = time;
+    const percent = videoPlayer.duration ? (time / videoPlayer.duration) * 100 : 0;
+    timeline.style.setProperty('--progress', `${percent}%`);
+    if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
   }
 
   videoPlayer.addEventListener('loadedmetadata', () => {
-    durationElem.textContent = formatTime(videoPlayer.duration);
-    timeline.max = videoPlayer.duration;
+    if (durationLabel) durationLabel.textContent = formatTime(videoPlayer.duration);
+    if (timeline) {
+      timeline.max = videoPlayer.duration;
+      timeline.step = 0.1;
+    }
   });
 
   videoPlayer.addEventListener('timeupdate', () => {
-    if (!timeline.matches(':active')) timeline.value = videoPlayer.currentTime;
-    currentTimeElem.textContent = formatTime(videoPlayer.currentTime);
-    const percent = (videoPlayer.currentTime / videoPlayer.duration) * 100;
-    timeline.style.setProperty('--progress', percent + '%');
+    updateTimelineUI(videoPlayer.currentTime);
   });
 
-  timeline.addEventListener('input', () => {
-    videoPlayer.currentTime = timeline.value;
-    socket.emit('video_seek', { room, time: timeline.value });
-  });
+  if (timeline) {
+    timeline.addEventListener('input', (e) => {
+      const t = parseFloat(e.target.value);
+      updateTimelineUI(t);
+    });
+    timeline.addEventListener('change', (e) => {
+      const t = parseFloat(e.target.value);
+      videoPlayer.currentTime = t;
+      socket.emit('video_seek', { room, time: t });
+    });
+  }
 
-  // --- Show/hide timeline on mouse move like YouTube ---
+  // --- YouTube-style fade in/out on mouse move ---
   function showTimeline() {
+    if (!timelineContainer) return;
     timelineContainer.style.opacity = '1';
-    clearTimeout(hideTimeout);
-    hideTimeout = setTimeout(() => {
+    clearTimeout(hideTimelineTimeout);
+    hideTimelineTimeout = setTimeout(() => {
       timelineContainer.style.opacity = '0';
     }, 2500);
   }
-
   videoContainer.addEventListener('mousemove', showTimeline);
   videoContainer.addEventListener('click', showTimeline);
 
-  // --- Mic Logic ---
+  // --- Mic Logic (unchanged) ---
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -201,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (micOn && !localStream) {
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }});
         socket.emit('ready-for-voice', { room });
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
@@ -219,20 +269,19 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // --- Update users ---
+  // --- Update User Icons (unchanged) ---
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = '';
     userNames.forEach(name => {
       const el = document.createElement('div');
       el.className = 'initial-circle';
-      el.textContent = name.charAt(0).toUpperCase();
-      el.style.backgroundColor = nameToColor(name);
+      el.textContent = (name ? name.charAt(0).toUpperCase() : '?');
+      el.style.backgroundColor = nameToColor(name || 'Anon');
       initialsContainer.appendChild(el);
     });
   });
 
-  // --- WebRTC signaling events ---
   socket.on('existing-voice-users', (ids) => {
     if (!localStream) return;
     ids.forEach(id => { if (id !== socket.id) sendOffer(id); });
@@ -258,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('ice-candidate', async ({ from, candidate }) => {
     const pc = getOrCreatePC(from);
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (e) {}
   });
 
   socket.on('user-left-voice', (socketId) => {
@@ -266,4 +315,5 @@ document.addEventListener('DOMContentLoaded', () => {
     delete peerConnections[socketId];
     document.getElementById(`audio-${socketId}`)?.remove();
   });
+
 });
