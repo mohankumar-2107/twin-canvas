@@ -855,5 +855,65 @@ body.movie-theme {
     height: 14px;
     background: #1e90ff;
     border:
+/* === Visible timeline slider === */
+.timeline-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 80%;
+  margin: 10px auto;
+  color: #fff;
+  font-family: monospace;
+}
+
+#currentTime, #duration {
+  min-width: 50px;
+  font-size: 14px;
+  color: #f0f0f0;
+}
+
+#timeline {
+  flex: 1;
+  appearance: none;
+  height: 6px;
+  background: #555;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+/* filled portion */
+#timeline::-webkit-slider-runnable-track {
+  height: 6px;
+  background: linear-gradient(to right, #1e90ff var(--progress, 0%), #555 var(--progress, 0%));
+  border-radius: 4px;
+}
+
+#timeline::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #1e90ff;
+  border: 2px solid white;
+  margin-top: -4px;
+}
+
+#timeline::-moz-range-track {
+  background: #555;
+  height: 6px;
+  border-radius: 4px;
+}
+#timeline::-moz-range-progress {
+  background: #1e90ff;
+  height: 6px;
+}
+#timeline::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #1e90ff;
+  border: 2px solid white;
+}
 
 
