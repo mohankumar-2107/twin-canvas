@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Share - TwinCanvas</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<!-- Added a new 'screen-theme' class for styling -->
+<body class="screen-theme"> 
+    <div class="night-sky-animations">
+        <div class="shooting-star"></div>
+        <div class="shooting-star"></div>
+    </div>
+    
+    <a href="#" id="backBtn" class="back-btn">← Back</a>
+    <a href="#" id="logoutBtn" class="logout-btn">Bye 👋</a>
+    
+    <div class="container room-container">
+        <div class="welcome-header fade-in">
+            <h2 id="welcomeMessage"></h2>
+        </div>
+        <div class="room-options">
+            <div class="card slide-up" id="createCard">
+                <h2>Create a Share Room</h2>
+                <p>Start a new session and invite your friend.</p>
+                <button id="createRoomBtn" class="btn">Create New Room</button>
+            </div>
+            <div class="card slide-up" id="joinCard">
+                <h2>Join a Share Room</h2>
+                <p>Enter the 4-digit code from your friend.</p>
+                <input type="text" id="roomCodeInput" placeholder="Enter Code" maxlength="4">
+                <button id="joinRoomBtn" class="btn">Join Room</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="roomCodeModal" class="modal-container hidden">
+        <div class="modal-content">
+            <h3>Your Room is Ready!</h3>
+            <p>Share this code with your friend:</p>
+            <div class="room-code-display">
+                <span id="roomCodeText"></span>
+                <button id="copyCodeBtn">Copy</button>
+            </div>
+            <p class="waiting-text">Waiting for your friend to join...</p>
+        </div>
+    </div>
+    
+    <!-- Links to a new 'screen_room.js' file -->
+    <script src="/js/screen_room.js"></script> 
+</body>
+</html>
