@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let movieStream;
   let localStream;
-  let isBroadcaster = false;
+  let isBroadcaster = false; // ✅ This is now critical
   const peerConnections = {};
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -29,8 +29,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const durationLabel = document.getElementById('duration');
   const videoContainer = document.getElementById('videoContainer');
   const timelineContainer = document.getElementById('timelineContainer');
-  
-  // ✅ NEW: Fullscreen button
   const fullscreenBtn = document.getElementById('fullscreenBtn');
 
   if (!room) { window.location.href = 'index.html'; return; }
@@ -79,7 +77,10 @@ document.addEventListener('DOMContentLoaded', () => {
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
-        if (timeline) timeline.disabled = false;
+        
+        // ✅ Receiver timeline is disabled until duration arrives
+        if (timeline) timeline.disabled = true;
+
       } else {
         // mic stream
         let audio = document.getElementById(`audio-${socketId}`);
@@ -117,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- File upload / capture (unchanged) ----------------
   fileInput.addEventListener('change', async () => {
-    isBroadcaster = true;
+    isBroadcaster = true; // ✅ You are the broadcaster
     const file = fileInput.files[0];
     if (!file) return;
 
@@ -148,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ---------------- Playback sync & controls (unchanged) ----------------
+  // ---------------- Playback sync & controls (MODIFIED) ----------------
   function setPlayIcon(isPlaying) {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
@@ -156,30 +157,51 @@ document.addEventListener('DOMContentLoaded', () => {
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
       socket.emit('video_play', { room });
-      videoPlayer.play().catch(()=>{});
-      setPlayIcon(true);
+      // ✅ Only broadcaster controls their player directly
+      if (isBroadcaster) { 
+        videoPlayer.play().catch(()=>{});
+        setPlayIcon(true);
+      }
     } else {
       socket.emit('video_pause', { room });
-      videoPlayer.pause();
-      setPlayIcon(false);
+      // ✅ Only broadcaster controls their player directly
+      if (isBroadcaster) {
+        videoPlayer.pause();
+        setPlayIcon(false);
+      }
     }
   });
 
   skipBtn.addEventListener('click', () => {
-    const maxDur = videoPlayer.duration || Infinity;
-    const newTime = Math.min((videoPlayer.currentTime || 0) + 10, maxDur);
-    videoPlayer.currentTime = newTime;
-    updateTimelineUI(newTime);
+    // ✅ Read time from the UI, not the video player
+    const maxDur = parseFloat(timeline.max) || Infinity;
+    const current = parseFloat(timeline.value) || 0;
+    const newTime = Math.min(current + 10, maxDur);
+
+    // ✅ Only broadcaster controls their player directly
+    if (isBroadcaster) {
+      videoPlayer.currentTime = newTime;
+    }
+    // Everyone emits the event and optimistically updates UI
     socket.emit('video_seek', { room, time: newTime });
+    updateTimelineUI(newTime);
   });
 
   reverseBtn.addEventListener('click', () => {
-    const newTime = Math.max((videoPlayer.currentTime || 0) - 10, 0);
-    videoPlayer.currentTime = newTime;
-    updateTimelineUI(newTime);
+    // ✅ Read time from the UI, not the video player
+    const current = parseFloat(timeline.value) || 0;
+    const newTime = Math.max(current - 10, 0);
+
+    // ✅ Only broadcaster controls their player directly
+    if (isBroadcaster) {
+      videoPlayer.currentTime = newTime;
+    }
+    // Everyone emits the event and optimistically updates UI
     socket.emit('video_seek', { room, time: newTime });
+    updateTimelineUI(newTime);
   });
 
+  // These events are now received by EVERYONE ELSE
   socket.on('video_play', () => {
     if (videoPlayer.paused) {
       videoPlayer.play().catch(()=>{});
@@ -193,14 +215,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   socket.on('video_seek', (time) => {
-    const localTime = videoPlayer.currentTime || 0;
-    if (Math.abs(localTime - time) > 0.4) {
-      videoPlayer.currentTime = time;
+    // ✅ Broadcaster updates its own time if it's out of sync
+    if (isBroadcaster) {
+      const localTime = videoPlayer.currentTime || 0;
+      if (Math.abs(localTime - time) > 0.4) {
+        videoPlayer.currentTime = time;
+      }
     }
+    // ✅ EVERYONE updates their UI from the socket event
     updateTimelineUI(time);
   });
 
-  // ---------------- Timeline logic (unchanged) ----------------
+  // ---------------- Timeline logic (MODIFIED) ----------------
   function formatTime(t) {
     if (!t || isNaN(t)) return '00:00';
     const m = Math.floor(t / 60);
@@ -211,40 +237,71 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateTimelineUI(time) {
     if (!timeline) return;
     timeline.value = time;
-    const percent = (videoPlayer.duration) ? (time / videoPlayer.duration) * 100 : 0;
+    const max = parseFloat(timeline.max) || 0;
+    const percent = (max > 0) ? (time / max) * 100 : 0;
     timeline.style.setProperty('--progress', `${percent}%`);
     if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
   }
 
   videoPlayer.addEventListener('loadedmetadata', () => {
-    if (durationLabel && !isNaN(videoPlayer.duration)) {
-      durationLabel.textContent = formatTime(videoPlayer.duration);
+    // ✅ Only the broadcaster can read duration from the video
+    if (isBroadcaster) {
+      const duration = videoPlayer.duration;
+      if (durationLabel && !isNaN(duration)) {
+        durationLabel.textContent = formatTime(duration);
+      }
+      if (timeline && !isNaN(duration)) {
+        timeline.max = duration;
+        timeline.step = 0.1;
+        timeline.disabled = false;
+      }
+      // ✅ ------ NEW: TELL EVERYONE THE DURATION ------
+      socket.emit('video_duration', { room, duration: duration });
+      
+      timelineContainer.classList.add('visible');
     }
-    if (timeline && !isNaN(videoPlayer.duration)) {
-      timeline.max = videoPlayer.duration;
+  });
+
+  // ✅ ------ NEW: RECEIVER LISTENS FOR DURATION ------
+  socket.on('video_duration', (duration) => {
+    if (isBroadcaster) return; // Ignore if we sent it
+
+    if (durationLabel && !isNaN(duration)) {
+      durationLabel.textContent = formatTime(duration);
+    }
+    if (timeline && !isNaN(duration)) {
+      timeline.max = duration;
       timeline.step = 0.1;
-      timeline.disabled = false;
+      timeline.disabled = false; // ✅ Enable timeline for receiver
     }
-    // ✅ NEW: Show controls when video is ready
     timelineContainer.classList.add('visible');
   });
 
+
   let isUserSeeking = false;
   videoPlayer.addEventListener('timeupdate', () => {
-    if (!isUserSeeking) updateTimelineUI(videoPlayer.currentTime || 0);
+    // ✅ ONLY the broadcaster updates UI from its own 'timeupdate'
+    if (isBroadcaster && !isUserSeeking) {
+      updateTimelineUI(videoPlayer.currentTime || 0);
+    }
   });
 
   if (timeline) {
     timeline.addEventListener('pointerdown', () => { isUserSeeking = true; });
     timeline.addEventListener('input', (e) => {
       const v = parseFloat(e.target.value || 0);
-      const percent = (videoPlayer.duration) ? (v / videoPlayer.duration) * 100 : 0;
+      const max = parseFloat(timeline.max) || 0;
+      const percent = (max > 0) ? (v / max) * 100 : 0;
       timeline.style.setProperty('--progress', `${percent}%`);
       if (currentTimeLabel) currentTimeLabel.textContent = formatTime(v);
     });
+    
     const finishSeek = (e) => {
       const v = parseFloat(e.target.value || 0);
-      videoPlayer.currentTime = v;
+      // ✅ Only broadcaster controls their player directly
+      if (isBroadcaster) {
+        videoPlayer.currentTime = v;
+      }
       updateTimelineUI(v);
       socket.emit('video_seek', { room, time: v });
       setTimeout(() => { isUserSeeking = false; }, 150);
@@ -254,30 +311,20 @@ document.addEventListener('DOMContentLoaded', () => {
     timeline.addEventListener('pointercancel', () => { isUserSeeking = false; });
   }
 
-  // ---------------- ✅ NEW: Toggleable Controls & Fullscreen ----------------
-  
-  // Function to toggle controls visibility
+  // ---------------- Toggleable Controls & Fullscreen (unchanged) ----------------
   function toggleControls() {
     if (!timelineContainer) return;
     timelineContainer.classList.toggle('visible');
   }
-
-  // Toggle controls on double-click
   videoContainer.addEventListener('dblclick', toggleControls);
-  
-  // Hide controls with a single click on the video player
   videoPlayer.addEventListener('click', () => {
     if (timelineContainer.classList.contains('visible')) {
       timelineContainer.classList.remove('visible');
     }
   });
-
-  // Stop clicks on the controls from bubbling up and hiding them
   timelineContainer.addEventListener('click', (e) => {
     e.stopPropagation();
   });
-
-  // Fullscreen button logic
   function toggleFullScreen() {
     if (!document.fullscreenElement) {
       videoContainer.requestFullscreen().catch(err => {
@@ -317,7 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ---------------- Signaling / UI logos (unchanged) ----------------
+  // ---------------- Signaling / UI logos (MODIFIED) ----------------
   socket.on('movie-users', (ids) => ids.forEach(id => sendOffer(id)));
 
   socket.on('update_users', (userNames) => {
@@ -352,6 +399,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('voice-answer', async ({ from, answer }) => {
     const pc = getOrCreatePC(from);
+
+    // ✅ ------ FIX for InvalidStateError ------
+    // If the state is 'stable', we aren't expecting an answer.
+    // This is a stray answer from a previous negotiation.
+    if (pc.signalingState === 'stable') {
+      console.warn(`Ignoring 'voice-answer' from ${from}, state is 'stable'.`);
+      return;
+    }
+    // ------ End of Fix ------
+
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   });
 
