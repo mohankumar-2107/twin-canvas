@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let movieStream;
   let localStream;
-  let isBroadcaster = false; // ✅ This is critical
+  let isBroadcaster = false; // This is critical
   const peerConnections = {};
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -99,14 +99,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return pc;
   }
 
+  // ✅ THIS FUNCTION IS MODIFIED
   async function sendOffer(to) {
     const pc = getOrCreatePC(to);
+
+    // ✅ ------ START OF FIX FOR GLARE ------
+    // This check prevents the 'have-remote-offer' error
+    if (pc.signalingState !== 'stable') {
+      console.warn(`Cannot send offer to ${to}, signaling state is: ${pc.signalingState}. Ignoring.`);
+      return; 
+    }
+    // ------ END OF FIX ------
+
     try {
       const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      await pc.setLocalDescription(offer); // This line was failing
       socket.emit('voice-offer', { room, to, offer: pc.localDescription });
     } catch (e) {
-      console.warn('sendOffer error', e);
+      // Added more descriptive logging
+      console.warn(`sendOffer error to ${to}: ${e.name} (${e.message})`);
     }
   }
 
@@ -149,12 +160,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ---------------- Playback sync & controls (MODIFIED) ----------------
+  // ---------------- Playback sync & controls (unchanged) ----------------
   function setPlayIcon(isPlaying) {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
 
-  // ✅ THIS IS THE ONLY CHANGED FUNCTION
   playPauseBtn.addEventListener('click', () => {
     // Check the button's ICON, not the video's 'paused' state
     const icon = playPauseBtn.querySelector('i');
@@ -204,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTimelineUI(time);
   });
 
-  // ---------------- Timeline logic (MODIFIED) ----------------
+  // ---------------- Timeline logic (unchanged) ----------------
   function formatTime(t) {
     if (!t || isNaN(t)) return '00:00';
     const m = Math.floor(t / 60);
@@ -240,7 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ------ NEW: RECEIVER LISTENS FOR DURATION ------
+  // ------ RECEIVER LISTENS FOR DURATION ------
   socket.on('video_duration', (duration) => {
     if (isBroadcaster) return; // Ignore if we sent it
 
@@ -267,7 +277,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ------ NEW: RECEIVER LISTENS FOR TIME UPDATES ------
+  // ------ RECEIVER LISTENS FOR TIME UPDATES ------
   socket.on('video_timeupdate', (time) => {
     if (isBroadcaster || isUserSeeking) return; // Ignore if we are sender or seeking
     updateTimelineUI(time);
@@ -355,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ---------------- Signaling / UI logos (MODIFIED) ----------------
+  // ---------------- Signaling / UI logos (unchanged) ----------------
   socket.on('movie-users', (ids) => ids.forEach(id => sendOffer(id)));
 
   socket.on('update_users', (userNames) => {
