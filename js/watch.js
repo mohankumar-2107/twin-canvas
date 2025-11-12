@@ -1,4 +1,4 @@
-// watch.js — Timeline & controls (keeps your existing signaling + streaming logic intact)
+// watch.js — Full final version with fullscreen-only timeline
 document.addEventListener('DOMContentLoaded', () => {
 
   const socket = io('https://twin-canvas.onrender.com');
@@ -73,12 +73,10 @@ document.addEventListener('DOMContentLoaded', () => {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream;
         videoPlayer.muted = false;
-        videoPlayer.play().catch(()=>{}); // autoplay may be blocked — button will unblock
-        // enable controls
+        videoPlayer.play().catch(()=>{}); 
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
-        // ensure timeline is enabled (if duration is available it'll be set by loadedmetadata)
         if (timeline) timeline.disabled = false;
       } else {
         // mic stream
@@ -98,7 +96,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return pc;
   }
 
-  // offer / renegotiate utilities (keeps your existing names)
   async function sendOffer(to) {
     const pc = getOrCreatePC(to);
     try {
@@ -109,13 +106,14 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('sendOffer error', e);
     }
   }
+
   async function renegotiateAll() {
     for (const id of Object.keys(peerConnections)) {
       await sendOffer(id);
     }
   }
 
-  // ---------------- File upload / capture (unchanged) ----------------
+  // ---------------- File upload / capture ----------------
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -137,12 +135,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (Object.keys(peerConnections).length === 0) {
-      // ask server to return peers so we can create offers to them (you implemented this)
       socket.emit('request_movie_users', { room });
     } else {
       for (const id of Object.keys(peerConnections)) {
         const pc = getOrCreatePC(id);
-        // remove prior video senders
         pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
         movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
       }
@@ -151,13 +147,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ---------------- Playback sync & controls ----------------
-
-  // helper set play icon
   function setPlayIcon(isPlaying) {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
 
-  // Play/pause: emit to server and apply locally
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
       socket.emit('video_play', { room });
@@ -170,7 +163,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Skip & Reverse now update locally AND emit a SINGLE seek event (so everyone jumps)
   skipBtn.addEventListener('click', () => {
     const maxDur = videoPlayer.duration || Infinity;
     const newTime = Math.min((videoPlayer.currentTime || 0) + 10, maxDur);
@@ -186,7 +178,6 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.emit('video_seek', { room, time: newTime });
   });
 
-  // remote events
   socket.on('video_play', () => {
     if (videoPlayer.paused) {
       videoPlayer.play().catch(()=>{});
@@ -200,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   socket.on('video_seek', (time) => {
-    // tolerance so we don't fight small differences
     const localTime = videoPlayer.currentTime || 0;
     if (Math.abs(localTime - time) > 0.4) {
       videoPlayer.currentTime = time;
@@ -208,8 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTimelineUI(time);
   });
 
-  // ---------------- Timeline logic (robust) ----------------
-
+  // ---------------- Timeline logic ----------------
   function formatTime(t) {
     if (!t || isNaN(t)) return '00:00';
     const m = Math.floor(t / 60);
@@ -225,7 +214,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
   }
 
-  // set duration when metadata loaded (works even for remote stream if metadata available)
   videoPlayer.addEventListener('loadedmetadata', () => {
     if (durationLabel && !isNaN(videoPlayer.duration)) {
       durationLabel.textContent = formatTime(videoPlayer.duration);
@@ -237,84 +225,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // timeupdate — update UI only when not seeking
   let isUserSeeking = false;
   videoPlayer.addEventListener('timeupdate', () => {
     if (!isUserSeeking) updateTimelineUI(videoPlayer.currentTime || 0);
   });
 
-  // Scrub behavior:
-  // - update UI on input (visual)
-  // - on pointerup/change -> apply seek locally and emit single seek
   if (timeline) {
-    // user starts dragging
     timeline.addEventListener('pointerdown', () => { isUserSeeking = true; });
-
-    // update visuals while dragging
     timeline.addEventListener('input', (e) => {
       const v = parseFloat(e.target.value || 0);
-      // update live label & progress
       const percent = (videoPlayer.duration) ? (v / videoPlayer.duration) * 100 : 0;
       timeline.style.setProperty('--progress', `${percent}%`);
       if (currentTimeLabel) currentTimeLabel.textContent = formatTime(v);
     });
-
-    // user finished dragging (applies the seek and informs everyone)
     const finishSeek = (e) => {
       const v = parseFloat(e.target.value || 0);
-      // apply locally
       videoPlayer.currentTime = v;
       updateTimelineUI(v);
-      // emit once
       socket.emit('video_seek', { room, time: v });
-      // small delay before allowing timeupdate to overwrite
       setTimeout(() => { isUserSeeking = false; }, 150);
     };
-
     timeline.addEventListener('change', finishSeek);
     timeline.addEventListener('pointerup', finishSeek);
     timeline.addEventListener('pointercancel', () => { isUserSeeking = false; });
-
-    // ensure keyboard accessibility: Enter/Space changes will trigger 'change' in most browsers
   }
 
-  // ---------------- Floating timeline appearance (double-tap & mousemove) ----------------
-
-   // ---------------- Floating timeline: show only in fullscreen ----------------
-
-  const videoContainer = document.getElementById('videoContainer');
-  const timelineContainer = document.getElementById('timelineContainer');
+  // ---------------- Floating timeline (fullscreen only) ----------------
   let floatingTimer = null;
-
-  // helper: detect if fullscreen
   function isFullscreen() {
     return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
   }
 
   function showFloatingTimeline() {
-    if (!timelineContainer || !isFullscreen()) return; // only in fullscreen
+    if (!timelineContainer || !isFullscreen()) return;
     timelineContainer.classList.add('visible');
     clearTimeout(floatingTimer);
     floatingTimer = setTimeout(() => {
       timelineContainer.classList.remove('visible');
-    }, 4000); // hide after 4s
+    }, 4000);
   }
 
-  // hide instantly when exiting fullscreen
   document.addEventListener('fullscreenchange', () => {
     if (!isFullscreen()) {
       timelineContainer?.classList.remove('visible');
     }
   });
 
-  // show timeline triggers
   videoPlayer.addEventListener('pause', showFloatingTimeline);
   videoPlayer.addEventListener('seeked', showFloatingTimeline);
   videoContainer?.addEventListener('mousemove', showFloatingTimeline);
   videoContainer?.addEventListener('touchstart', showFloatingTimeline);
   videoContainer?.addEventListener('dblclick', showFloatingTimeline);
 
-  // hide shortly after play resumes
   videoPlayer.addEventListener('play', () => {
     clearTimeout(floatingTimer);
     if (isFullscreen()) {
@@ -352,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ---------------- Signaling / UI logos (unchanged) ----------------
+  // ---------------- Signaling / UI logos ----------------
   socket.on('movie-users', (ids) => ids.forEach(id => sendOffer(id)));
 
   socket.on('update_users', (userNames) => {
