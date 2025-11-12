@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Share - TwinCanvas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="screen-theme">
+    <!-- User logos and mic container -->
+    <div id="userInitials" class="user-initials-container"></div>
+    <div id="audio-container"></div> 
+
+    <div class="share-container">
+        <!-- This video tag will show the screen share -->
+        <video id="screenVideo" autoplay playsinline></video>
+
+        <!-- This button starts the share -->
+        <div id="startSharePrompt" class="file-prompt">
+            <i class="fas fa-desktop"></i>
+            <h3>Share Your Screen</h3>
+            <p>Click the button below to start presenting.</p>
+            <button id="startShareBtn" class="btn">Start Sharing</button>
+        </div>
+    </div>
+    
+    <!-- Controls at the bottom (Mic and Stop Share) -->
+    <div class="video-controls">
+        <button id="micBtn" class="tool" title="Toggle Mic"><i class="fas fa-microphone-slash"></i></button>
+        <button id="stopShareBtn" class="btn" style="display: none;">Stop Sharing</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script src="/js/share.js"></script>
+</body>
+</html>
