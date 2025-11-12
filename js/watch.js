@@ -23,17 +23,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
+  const timeline = document.getElementById("timeline");
+  const currentTimeLabel = document.getElementById("currentTime");
+  const durationLabel = document.getElementById("duration");
+
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
 
-  // ✅ Fix reverse broadcasting
   socket.on("movie-users", (ids) => {
     console.log("[watch] movie-users ->", ids);
     ids.forEach(id => sendOffer(id));
   });
 
-  // ✅ nameToColor FIX (logos working again)
   function nameToColor(name) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
@@ -54,14 +56,8 @@ document.addEventListener('DOMContentLoaded', () => {
     pc = new RTCPeerConnection(configuration);
     peerConnections[socketId] = pc;
 
-    // add mic
-    if (localStream) {
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    }
-    // add movie
-    if (isBroadcaster && movieStream) {
-      movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
-    }
+    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    if (isBroadcaster && movieStream) movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
 
     pc.onicecandidate = e => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
@@ -70,7 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
     pc.ontrack = (event) => {
       const stream = event.streams[0];
 
-      // ✅ MOVIE STREAM
       if (stream.getVideoTracks().length > 0) {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream;
@@ -79,10 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
-      }
-
-      // ✅ MIC STREAM
-      else {
+      } else {
         let audio = document.getElementById(`audio-${socketId}`);
         if (!audio) {
           audio = document.createElement('audio');
@@ -111,7 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ✅ File Upload Logic (Both sides)
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -119,7 +110,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     videoPlayer.src = URL.createObjectURL(file);
     videoPlayer.muted = false;
-
     await videoPlayer.play().catch(() => {});
     filePrompt.style.display = 'none';
     playAllBlockedAudio();
@@ -141,7 +131,6 @@ document.addEventListener('DOMContentLoaded', () => {
       for (const id of Object.keys(peerConnections)) {
         const pc = getOrCreatePC(id);
 
-        // remove old tracks
         pc.getSenders()
           .filter(s => s.track && s.track.kind === 'video')
           .forEach(s => pc.removeTrack(s));
@@ -152,7 +141,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ✅ Playback Sync
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
       videoPlayer.play();
@@ -173,11 +161,17 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.emit('video_seek', { room, time: videoPlayer.currentTime });
   });
 
-  socket.on('video_play', () => videoPlayer.play().catch(()=>{}));
+  socket.on('video_play', () => videoPlayer.play().catch(() => {}));
   socket.on('video_pause', () => videoPlayer.pause());
-  socket.on('video_seek', (time) => videoPlayer.currentTime = time);
 
-  // ✅ Mic
+  socket.on('video_seek', (time) => {
+    videoPlayer.currentTime = time;
+    timeline.value = time;
+    const pct = (time / videoPlayer.duration) * 100;
+    timeline.style.setProperty('--progress', pct + '%');
+    currentTimeLabel.innerText = formatTime(time);
+  });
+
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -187,10 +181,12 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }});
         socket.emit('ready-for-voice', { room });
+
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
+
         await renegotiateAll();
         playAllBlockedAudio();
 
@@ -207,7 +203,6 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ✅ Logos fixed
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = '';
@@ -220,7 +215,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ✅ Voice signaling
   socket.on('existing-voice-users', (ids) => {
     if (!localStream) return;
     ids.forEach(id => {
@@ -256,31 +250,30 @@ document.addEventListener('DOMContentLoaded', () => {
     delete peerConnections[socketId];
     document.getElementById(`audio-${socketId}`)?.remove();
   });
-  const timeline = document.getElementById("timeline");
-const currentTimeLabel = document.getElementById("currentTime");
-const durationLabel = document.getElementById("duration");
 
-// update time labels
-function formatTime(t) {
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-}
-  
-videoPlayer.addEventListener('loadedmetadata', () => {
-    duration.innerText = formatTime(videoPlayer.duration);
+  // ✅ ✅ TIMELINE FEATURE BELOW (only new part)
+
+  function formatTime(t) {
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+
+  videoPlayer.addEventListener('loadedmetadata', () => {
+    durationLabel.innerText = formatTime(videoPlayer.duration);
     timeline.max = videoPlayer.duration;
-});
-  
-videoPlayer.addEventListener('timeupdate', () => {
-    const percent = (videoPlayer.currentTime / videoPlayer.duration) * 100;
-    timeline.style.setProperty('--progress', percent + '%');
-    currentTime.innerText = formatTime(videoPlayer.currentTime);
-});
+  });
 
-timeline.addEventListener("input", () => {
-  videoPlayer.currentTime = timeline.value;
-  socket.emit('video_seek', { room, time: videoPlayer.currentTime });
-});
+  videoPlayer.addEventListener('timeupdate', () => {
+    const percent = (videoPlayer.currentTime / videoPlayer.duration) * 100;
+    timeline.value = videoPlayer.currentTime;
+    timeline.style.setProperty('--progress', percent + '%');
+    currentTimeLabel.innerText = formatTime(videoPlayer.currentTime);
+  });
+
+  timeline.addEventListener("input", () => {
+    videoPlayer.currentTime = timeline.value;
+    socket.emit('video_seek', { room, time: videoPlayer.currentTime });
+  });
 
 });
