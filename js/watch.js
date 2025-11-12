@@ -1,4 +1,4 @@
-// watch.js — full updated file
+// watch.js — Timeline & controls (keeps your existing signaling + streaming logic intact)
 document.addEventListener('DOMContentLoaded', () => {
 
   const socket = io('https://twin-canvas.onrender.com');
@@ -20,30 +20,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const playPauseBtn = document.getElementById('playPauseBtn');
   const skipBtn = document.getElementById('skipBtn');
   const reverseBtn = document.getElementById('reverseBtn');
+
   const micBtn = document.getElementById('micBtn');
   const audioContainer = document.getElementById('audio-container');
 
-  // --- timeline elements ---
-  const videoContainer = document.getElementById('videoContainer');
+  // timeline UI elements
   const timeline = document.getElementById('timeline');
   const currentTimeLabel = document.getElementById('currentTime');
   const durationLabel = document.getElementById('duration');
+  const videoContainer = document.getElementById('videoContainer');
   const timelineContainer = document.getElementById('timelineContainer');
-
-  let hideTimelineTimeout;
 
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
 
-  socket.on("movie-users", (ids) => {
-    ids.forEach(id => sendOffer(id));
-  });
-
+  // --- helper functions (unchanged semantics) ---
   function nameToColor(name) {
     if (!name) return '#888';
     let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
     const hue = Math.abs(hash) % 360;
     return `hsl(${hue}, 70%, 60%)`;
   }
@@ -62,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     if (isBroadcaster && movieStream) movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
 
-    pc.onicecandidate = (e) => {
+    pc.onicecandidate = e => {
       if (e.candidate) socket.emit('ice-candidate', { room, to: socketId, candidate: e.candidate });
     };
 
@@ -70,15 +68,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const stream = event.streams[0];
       if (!stream) return;
 
+      // movie stream
       if (stream.getVideoTracks().length > 0) {
         filePrompt.style.display = 'none';
         videoPlayer.srcObject = stream;
         videoPlayer.muted = false;
-        videoPlayer.play().catch(()=>{});
+        videoPlayer.play().catch(()=>{}); // autoplay may be blocked — button will unblock
+        // enable controls
         playPauseBtn.disabled = false;
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
+        // ensure timeline is enabled (if duration is available it'll be set by loadedmetadata)
+        if (timeline) timeline.disabled = false;
       } else {
+        // mic stream
         let audio = document.getElementById(`audio-${socketId}`);
         if (!audio) {
           audio = document.createElement('audio');
@@ -95,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return pc;
   }
 
+  // offer / renegotiate utilities (keeps your existing names)
   async function sendOffer(to) {
     const pc = getOrCreatePC(to);
     try {
@@ -102,17 +106,16 @@ document.addEventListener('DOMContentLoaded', () => {
       await pc.setLocalDescription(offer);
       socket.emit('voice-offer', { room, to, offer: pc.localDescription });
     } catch (e) {
-      console.warn("sendOffer error", e);
+      console.warn('sendOffer error', e);
     }
   }
-
   async function renegotiateAll() {
     for (const id of Object.keys(peerConnections)) {
       await sendOffer(id);
     }
   }
 
-  // --- File Upload Logic ---
+  // ---------------- File upload / capture (unchanged) ----------------
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -124,18 +127,22 @@ document.addEventListener('DOMContentLoaded', () => {
     filePrompt.style.display = 'none';
     playAllBlockedAudio();
 
-    movieStream = (videoPlayer.captureStream && videoPlayer.captureStream()) || 
-                  (videoPlayer.mozCaptureStream && videoPlayer.mozCaptureStream());
+    movieStream = (typeof videoPlayer.captureStream === 'function')
+      ? videoPlayer.captureStream()
+      : (typeof videoPlayer.mozCaptureStream === 'function') ? videoPlayer.mozCaptureStream() : null;
+
     if (!movieStream) {
-      alert("Your browser does not support captureStream().");
+      alert('Browser does not support captureStream() - use Chrome/Edge.');
       return;
     }
 
     if (Object.keys(peerConnections).length === 0) {
-      socket.emit("request_movie_users", { room });
+      // ask server to return peers so we can create offers to them (you implemented this)
+      socket.emit('request_movie_users', { room });
     } else {
       for (const id of Object.keys(peerConnections)) {
         const pc = getOrCreatePC(id);
+        // remove prior video senders
         pc.getSenders().filter(s => s.track && s.track.kind === 'video').forEach(s => pc.removeTrack(s));
         movieStream.getTracks().forEach(t => pc.addTrack(t, movieStream));
       }
@@ -143,11 +150,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- Sync Controls ---
+  // ---------------- Playback sync & controls ----------------
+
+  // helper set play icon
   function setPlayIcon(isPlaying) {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
 
+  // Play/pause: emit to server and apply locally
   playPauseBtn.addEventListener('click', () => {
     if (videoPlayer.paused) {
       socket.emit('video_play', { room });
@@ -160,20 +170,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Skip & Reverse now update locally AND emit a SINGLE seek event (so everyone jumps)
   skipBtn.addEventListener('click', () => {
-    const newTime = Math.min(videoPlayer.currentTime + 10, videoPlayer.duration || Infinity);
+    const maxDur = videoPlayer.duration || Infinity;
+    const newTime = Math.min((videoPlayer.currentTime || 0) + 10, maxDur);
     videoPlayer.currentTime = newTime;
-    socket.emit('video_seek', { room, time: newTime });
     updateTimelineUI(newTime);
+    socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
-    const newTime = Math.max(videoPlayer.currentTime - 10, 0);
+    const newTime = Math.max((videoPlayer.currentTime || 0) - 10, 0);
     videoPlayer.currentTime = newTime;
-    socket.emit('video_seek', { room, time: newTime });
     updateTimelineUI(newTime);
+    socket.emit('video_seek', { room, time: newTime });
   });
 
+  // remote events
   socket.on('video_play', () => {
     if (videoPlayer.paused) {
       videoPlayer.play().catch(()=>{});
@@ -187,111 +200,120 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   socket.on('video_seek', (time) => {
-    if (Math.abs(videoPlayer.currentTime - time) > 0.5) videoPlayer.currentTime = time;
+    // tolerance so we don't fight small differences
+    const localTime = videoPlayer.currentTime || 0;
+    if (Math.abs(localTime - time) > 0.4) {
+      videoPlayer.currentTime = time;
+    }
     updateTimelineUI(time);
   });
 
-  // --- Timeline Logic (YouTube Style) ---
- // ---------------- Timeline logic (fixed alignment + viewer lock) ----------------
+  // ---------------- Timeline logic (robust) ----------------
 
-// helper to format mm:ss
-function formatTime(t) {
-  if (!t || isNaN(t)) return "00:00";
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-}
-
-// update both the range and labels
-function updateTimelineUI(time) {
-  if (!timeline) return;
-  timeline.value = time;
-  const percent = (videoPlayer.duration) ? (time / videoPlayer.duration) * 100 : 0;
-  timeline.style.setProperty('--progress', `${percent}%`);
-  if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
-}
-
-videoPlayer.addEventListener('loadedmetadata', () => {
-  const dur = videoPlayer.duration;
-  if (isFinite(dur)) {
-    durationLabel.textContent = formatTime(dur);
-    timeline.max = dur;
-    timeline.step = 0.1;
-  } else {
-    durationLabel.textContent = "00:00";
+  function formatTime(t) {
+    if (!t || isNaN(t)) return '00:00';
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
   }
 
-  // ✅ viewer lock: disable seeking if not broadcaster
-  if (!isBroadcaster) timeline.disabled = true;
-});
-
-videoPlayer.addEventListener('timeupdate', () => {
-  updateTimelineUI(videoPlayer.currentTime);
-});
-
-// ✅ Allow seeking only for broadcaster
-if (timeline) {
-  timeline.addEventListener('input', (e) => {
-    if (!isBroadcaster) return; // prevent viewer scrubbing
-    const t = parseFloat(e.target.value);
-    updateTimelineUI(t);
-  });
-  timeline.addEventListener('change', (e) => {
-    if (!isBroadcaster) return;
-    const t = parseFloat(e.target.value);
-    videoPlayer.currentTime = t;
-    socket.emit('video_seek', { room, time: t });
-  });
-}
-
-// ✅ Show/hide timeline like YouTube
-function showTimeline() {
-  if (!timelineContainer) return;
-  timelineContainer.style.opacity = '1';
-  clearTimeout(hideTimelineTimeout);
-  hideTimelineTimeout = setTimeout(() => {
-    timelineContainer.style.opacity = '0';
-  }, 2500);
-}
-videoContainer.addEventListener('mousemove', showTimeline);
-videoContainer.addEventListener('click', showTimeline);
-  // --- Floating bar show/hide on double tap or mouse move ---
-let floatingVisible = false;
-let hideFloatingTimeout;
-
-function toggleFloatingBar() {
-  const bar = document.getElementById('timelineContainer');
-  if (!bar) return;
-
-  floatingVisible = !floatingVisible;
-  if (floatingVisible) {
-    bar.classList.add('visible');
-    clearTimeout(hideFloatingTimeout);
-    hideFloatingTimeout = setTimeout(() => {
-      bar.classList.remove('visible');
-      floatingVisible = false;
-    }, 4000);
-  } else {
-    bar.classList.remove('visible');
+  function updateTimelineUI(time) {
+    if (!timeline) return;
+    timeline.value = time;
+    const percent = (videoPlayer.duration) ? (time / videoPlayer.duration) * 100 : 0;
+    timeline.style.setProperty('--progress', `${percent}%`);
+    if (currentTimeLabel) currentTimeLabel.textContent = formatTime(time);
   }
-}
 
-// double-tap (or double-click) to bring it up like VLC
-videoContainer.addEventListener('dblclick', toggleFloatingBar);
+  // set duration when metadata loaded (works even for remote stream if metadata available)
+  videoPlayer.addEventListener('loadedmetadata', () => {
+    if (durationLabel && !isNaN(videoPlayer.duration)) {
+      durationLabel.textContent = formatTime(videoPlayer.duration);
+    }
+    if (timeline && !isNaN(videoPlayer.duration)) {
+      timeline.max = videoPlayer.duration;
+      timeline.step = 0.1;
+      timeline.disabled = false;
+    }
+  });
 
-// also show briefly when user moves mouse
-videoContainer.addEventListener('mousemove', () => {
-  const bar = document.getElementById('timelineContainer');
-  if (!bar) return;
-  bar.classList.add('visible');
-  clearTimeout(hideFloatingTimeout);
-  hideFloatingTimeout = setTimeout(() => {
-    bar.classList.remove('visible');
-  }, 2500);
-});
+  // timeupdate — update UI only when not seeking
+  let isUserSeeking = false;
+  videoPlayer.addEventListener('timeupdate', () => {
+    if (!isUserSeeking) updateTimelineUI(videoPlayer.currentTime || 0);
+  });
 
+  // Scrub behavior:
+  // - update UI on input (visual)
+  // - on pointerup/change -> apply seek locally and emit single seek
+  if (timeline) {
+    // user starts dragging
+    timeline.addEventListener('pointerdown', () => { isUserSeeking = true; });
 
-  // --- Mic Logic (unchanged) ---
+    // update visuals while dragging
+    timeline.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value || 0);
+      // update live label & progress
+      const percent = (videoPlayer.duration) ? (v / videoPlayer.duration) * 100 : 0;
+      timeline.style.setProperty('--progress', `${percent}%`);
+      if (currentTimeLabel) currentTimeLabel.textContent = formatTime(v);
+    });
+
+    // user finished dragging (applies the seek and informs everyone)
+    const finishSeek = (e) => {
+      const v = parseFloat(e.target.value || 0);
+      // apply locally
+      videoPlayer.currentTime = v;
+      updateTimelineUI(v);
+      // emit once
+      socket.emit('video_seek', { room, time: v });
+      // small delay before allowing timeupdate to overwrite
+      setTimeout(() => { isUserSeeking = false; }, 150);
+    };
+
+    timeline.addEventListener('change', finishSeek);
+    timeline.addEventListener('pointerup', finishSeek);
+    timeline.addEventListener('pointercancel', () => { isUserSeeking = false; });
+
+    // ensure keyboard accessibility: Enter/Space changes will trigger 'change' in most browsers
+  }
+
+  // ---------------- Floating timeline appearance (double-tap & mousemove) ----------------
+
+  let floatingTimer = null;
+  function showFloatingTimeline() {
+    if (!timelineContainer) return;
+    timelineContainer.classList.add('visible');
+    clearTimeout(floatingTimer);
+    floatingTimer = setTimeout(() => {
+      timelineContainer.classList.remove('visible');
+    }, 3500);
+  }
+
+  // double-click / double-tap to toggle visible
+  videoContainer?.addEventListener('dblclick', () => {
+    if (!timelineContainer) return;
+    if (timelineContainer.classList.contains('visible')) {
+      timelineContainer.classList.remove('visible');
+      clearTimeout(floatingTimer);
+    } else {
+      showFloatingTimeline();
+    }
+  });
+
+  // show controls briefly on pointer move (desktop) or touchstart (mobile)
+  videoContainer?.addEventListener('mousemove', () => { showFloatingTimeline(); });
+  videoContainer?.addEventListener('touchstart', () => { showFloatingTimeline(); });
+
+  // show on pause
+  videoPlayer.addEventListener('pause', () => { if (timelineContainer) timelineContainer.classList.add('visible'); });
+  // hide shortly after play
+  videoPlayer.addEventListener('play', () => { if (timelineContainer) {
+    clearTimeout(floatingTimer);
+    floatingTimer = setTimeout(()=> timelineContainer.classList.remove('visible'), 1800);
+  } });
+
+  // ---------------- Mic logic (unchanged) ----------------
   let micOn = false;
   micBtn.addEventListener('click', async () => {
     micOn = !micOn;
@@ -301,12 +323,14 @@ videoContainer.addEventListener('mousemove', () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }});
         socket.emit('ready-for-voice', { room });
+
         for (const id of Object.keys(peerConnections)) {
           const pc = getOrCreatePC(id);
           localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
         }
         await renegotiateAll();
         playAllBlockedAudio();
+
       } catch (e) {
         console.error("Mic blocked:", e);
         micOn = false;
@@ -317,7 +341,9 @@ videoContainer.addEventListener('mousemove', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // --- Update User Icons (unchanged) ---
+  // ---------------- Signaling / UI logos (unchanged) ----------------
+  socket.on('movie-users', (ids) => ids.forEach(id => sendOffer(id)));
+
   socket.on('update_users', (userNames) => {
     const initialsContainer = document.getElementById('userInitials');
     initialsContainer.innerHTML = '';
