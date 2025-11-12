@@ -1,4 +1,3 @@
-// watch.js — Full final version with fullscreen-only timeline
 document.addEventListener('DOMContentLoaded', () => {
 
   const socket = io('https://twin-canvas.onrender.com');
@@ -30,12 +29,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const durationLabel = document.getElementById('duration');
   const videoContainer = document.getElementById('videoContainer');
   const timelineContainer = document.getElementById('timelineContainer');
+  
+  // ✅ NEW: Fullscreen button
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
 
   if (!room) { window.location.href = 'index.html'; return; }
 
   socket.emit('join_movie_room', { room, userName });
 
-  // --- helper functions (unchanged semantics) ---
+  // --- helper functions (unchanged) ---
   function nameToColor(name) {
     if (!name) return '#888';
     let hash = 0;
@@ -113,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ---------------- File upload / capture ----------------
+  // ---------------- File upload / capture (unchanged) ----------------
   fileInput.addEventListener('change', async () => {
     isBroadcaster = true;
     const file = fileInput.files[0];
@@ -146,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ---------------- Playback sync & controls ----------------
+  // ---------------- Playback sync & controls (unchanged) ----------------
   function setPlayIcon(isPlaying) {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
@@ -198,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTimelineUI(time);
   });
 
-  // ---------------- Timeline logic ----------------
+  // ---------------- Timeline logic (unchanged) ----------------
   function formatTime(t) {
     if (!t || isNaN(t)) return '00:00';
     const m = Math.floor(t / 60);
@@ -223,6 +225,8 @@ document.addEventListener('DOMContentLoaded', () => {
       timeline.step = 0.1;
       timeline.disabled = false;
     }
+    // ✅ NEW: Show controls when video is ready
+    timelineContainer.classList.add('visible');
   });
 
   let isUserSeeking = false;
@@ -250,42 +254,41 @@ document.addEventListener('DOMContentLoaded', () => {
     timeline.addEventListener('pointercancel', () => { isUserSeeking = false; });
   }
 
-  // ---------------- Floating timeline (fullscreen only) ----------------
-  let floatingTimer = null;
-  function isFullscreen() {
-    return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+  // ---------------- ✅ NEW: Toggleable Controls & Fullscreen ----------------
+  
+  // Function to toggle controls visibility
+  function toggleControls() {
+    if (!timelineContainer) return;
+    timelineContainer.classList.toggle('visible');
   }
 
-  function showFloatingTimeline() {
-    if (!timelineContainer || !isFullscreen()) return;
-    timelineContainer.classList.add('visible');
-    clearTimeout(floatingTimer);
-    floatingTimer = setTimeout(() => {
+  // Toggle controls on double-click
+  videoContainer.addEventListener('dblclick', toggleControls);
+  
+  // Hide controls with a single click on the video player
+  videoPlayer.addEventListener('click', () => {
+    if (timelineContainer.classList.contains('visible')) {
       timelineContainer.classList.remove('visible');
-    }, 4000);
+    }
+  });
+
+  // Stop clicks on the controls from bubbling up and hiding them
+  timelineContainer.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  // Fullscreen button logic
+  function toggleFullScreen() {
+    if (!document.fullscreenElement) {
+      videoContainer.requestFullscreen().catch(err => {
+        alert(`Error: ${err.message} (${err.name})`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
   }
-
-  document.addEventListener('fullscreenchange', () => {
-    if (!isFullscreen()) {
-      timelineContainer?.classList.remove('visible');
-    }
-  });
-
-  videoPlayer.addEventListener('pause', showFloatingTimeline);
-  videoPlayer.addEventListener('seeked', showFloatingTimeline);
-  videoContainer?.addEventListener('mousemove', showFloatingTimeline);
-  videoContainer?.addEventListener('touchstart', showFloatingTimeline);
-  videoContainer?.addEventListener('dblclick', showFloatingTimeline);
-
-  videoPlayer.addEventListener('play', () => {
-    clearTimeout(floatingTimer);
-    if (isFullscreen()) {
-      floatingTimer = setTimeout(() => {
-        timelineContainer.classList.remove('visible');
-      }, 2000);
-    }
-  });
-
+  fullscreenBtn.addEventListener('click', toggleFullScreen);
+  
   // ---------------- Mic logic (unchanged) ----------------
   let micOn = false;
   micBtn.addEventListener('click', async () => {
@@ -314,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icon.className = micOn ? 'fas fa-microphone' : 'fas fa-microphone-slash';
   });
 
-  // ---------------- Signaling / UI logos ----------------
+  // ---------------- Signaling / UI logos (unchanged) ----------------
   socket.on('movie-users', (ids) => ids.forEach(id => sendOffer(id)));
 
   socket.on('update_users', (userNames) => {
