@@ -78,8 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
         skipBtn.disabled = false;
         reverseBtn.disabled = false;
         
-        // Receiver timeline is disabled until duration arrives
-        if (timeline) timeline.disabled = true;
+        // ✅ THIS LINE WAS REMOVED. This was the bug.
+        // if (timeline) timeline.disabled = true; 
 
       } else {
         // mic stream
@@ -99,24 +99,21 @@ document.addEventListener('DOMContentLoaded', () => {
     return pc;
   }
 
-  // ✅ THIS FUNCTION IS MODIFIED
+  // This function has the fix for the 'have-remote-offer' error
   async function sendOffer(to) {
     const pc = getOrCreatePC(to);
 
-    // ✅ ------ START OF FIX FOR GLARE ------
-    // This check prevents the 'have-remote-offer' error
+    // FIX FOR GLARE
     if (pc.signalingState !== 'stable') {
       console.warn(`Cannot send offer to ${to}, signaling state is: ${pc.signalingState}. Ignoring.`);
       return; 
     }
-    // ------ END OF FIX ------
 
     try {
       const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer); // This line was failing
+      await pc.setLocalDescription(offer);
       socket.emit('voice-offer', { room, to, offer: pc.localDescription });
     } catch (e) {
-      // Added more descriptive logging
       console.warn(`sendOffer error to ${to}: ${e.name} (${e.message})`);
     }
   }
@@ -165,15 +162,13 @@ document.addEventListener('DOMContentLoaded', () => {
     playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
   }
 
+  // This function has the fix for the rapid-click bug
   playPauseBtn.addEventListener('click', () => {
-    // Check the button's ICON, not the video's 'paused' state
     const icon = playPauseBtn.querySelector('i');
     
     if (icon.classList.contains('fa-play')) {
-      // If it shows "play", we must want to play
       socket.emit('video_play', { room });
     } else {
-      // If it shows "pause", we must want to pause
       socket.emit('video_pause', { room });
     }
   });
@@ -182,14 +177,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxDur = parseFloat(timeline.max) || Infinity;
     const current = parseFloat(timeline.value) || 0;
     const newTime = Math.min(current + 10, maxDur);
-    // EVERYONE just emits the event
     socket.emit('video_seek', { room, time: newTime });
   });
 
   reverseBtn.addEventListener('click', () => {
     const current = parseFloat(timeline.value) || 0;
     const newTime = Math.max(current - 10, 0);
-    // EVERYONE just emits the event
     socket.emit('video_seek', { room, time: newTime });
   });
 
@@ -206,11 +199,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   socket.on('video_seek', (time) => {
-    // ONLY broadcaster actually changes the video time
     if (isBroadcaster) {
       videoPlayer.currentTime = time;
     }
-    // Everyone updates their UI
     updateTimelineUI(time);
   });
 
@@ -232,7 +223,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   videoPlayer.addEventListener('loadedmetadata', () => {
-    // Only the broadcaster can read duration from the video
     if (isBroadcaster) {
       const duration = videoPlayer.duration;
       if (durationLabel && !isNaN(duration)) {
@@ -243,16 +233,13 @@ document.addEventListener('DOMContentLoaded', () => {
         timeline.step = 0.1;
         timeline.disabled = false;
       }
-      // ------ TELL EVERYONE THE DURATION ------
       socket.emit('video_duration', { room, duration: duration });
-      
       timelineContainer.classList.add('visible');
     }
   });
 
-  // ------ RECEIVER LISTENS FOR DURATION ------
   socket.on('video_duration', (duration) => {
-    if (isBroadcaster) return; // Ignore if we sent it
+    if (isBroadcaster) return; 
 
     if (durationLabel && !isNaN(duration)) {
       durationLabel.textContent = formatTime(duration);
@@ -260,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (timeline && !isNaN(duration)) {
       timeline.max = duration;
       timeline.step = 0.1;
-      timeline.disabled = false; // Enable timeline for receiver
+      timeline.disabled = false; 
     }
     timelineContainer.classList.add('visible');
   });
@@ -268,18 +255,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let isUserSeeking = false;
   videoPlayer.addEventListener('timeupdate', () => {
-    // ONLY the broadcaster sends time updates
     if (isBroadcaster && !isUserSeeking) {
       const time = videoPlayer.currentTime || 0;
       updateTimelineUI(time);
-      // ------ SEND CURRENT TIME TO EVERYONE ------
       socket.emit('video_timeupdate', { room, time: time });
     }
   });
 
-  // ------ RECEIVER LISTENS FOR TIME UPDATES ------
   socket.on('video_timeupdate', (time) => {
-    if (isBroadcaster || isUserSeeking) return; // Ignore if we are sender or seeking
+    if (isBroadcaster || isUserSeeking) return; 
     updateTimelineUI(time);
   });
 
@@ -296,10 +280,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const finishSeek = (e) => {
       const v = parseFloat(e.target.value || 0);
-      // EVERYONE just emits the seek event
       socket.emit('video_seek', { room, time: v });
       
-      // Update UI locally *only if* broadcaster
       if(isBroadcaster) {
         videoPlayer.currentTime = v;
         updateTimelineUI(v);
@@ -401,12 +383,11 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('voice-answer', async ({ from, answer }) => {
     const pc = getOrCreatePC(from);
 
-    // ------ FIX for InvalidStateError ------
+    // This has the fix for the 'stable' state error
     if (pc.signalingState === 'stable') {
       console.warn(`Ignoring 'voice-answer' from ${from}, state is 'stable'.`);
       return;
     }
-    // ------ End of Fix ------
 
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   });
