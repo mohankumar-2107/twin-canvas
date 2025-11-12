@@ -892,3 +892,52 @@ body.movie-theme {
     background: var(--primary-color);
     border-radius: 50%;
 }
+.timeline-container {
+  position: absolute;
+  bottom: 80px;
+  left: 5%;
+  width: 90%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out;
+  z-index: 20;
+}
+
+.timeline-container span {
+  color: white;
+  font-size: 0.9em;
+  min-width: 45px;
+  text-align: center;
+}
+
+#timeline {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 6px;
+  background: linear-gradient(
+    to right,
+    var(--primary-color) var(--progress, 0%),
+    rgba(255,255,255,0.2) var(--progress, 0%)
+  );
+  outline: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+#timeline:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#timeline::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+}
