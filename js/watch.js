@@ -255,6 +255,41 @@ function showTimeline() {
 }
 videoContainer.addEventListener('mousemove', showTimeline);
 videoContainer.addEventListener('click', showTimeline);
+  // --- Floating bar show/hide on double tap or mouse move ---
+let floatingVisible = false;
+let hideFloatingTimeout;
+
+function toggleFloatingBar() {
+  const bar = document.getElementById('timelineContainer');
+  if (!bar) return;
+
+  floatingVisible = !floatingVisible;
+  if (floatingVisible) {
+    bar.classList.add('visible');
+    clearTimeout(hideFloatingTimeout);
+    hideFloatingTimeout = setTimeout(() => {
+      bar.classList.remove('visible');
+      floatingVisible = false;
+    }, 4000);
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+// double-tap (or double-click) to bring it up like VLC
+videoContainer.addEventListener('dblclick', toggleFloatingBar);
+
+// also show briefly when user moves mouse
+videoContainer.addEventListener('mousemove', () => {
+  const bar = document.getElementById('timelineContainer');
+  if (!bar) return;
+  bar.classList.add('visible');
+  clearTimeout(hideFloatingTimeout);
+  hideFloatingTimeout = setTimeout(() => {
+    bar.classList.remove('visible');
+  }, 2500);
+});
+
 
   // --- Mic Logic (unchanged) ---
   let micOn = false;
